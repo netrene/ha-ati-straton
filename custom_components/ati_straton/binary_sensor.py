@@ -119,6 +119,7 @@ class ATIStratonSpotOnlineBinarySensor(ATIStratonSpotEntity, BinarySensorEntity)
     def __init__(self, coordinator: ATIStratonCoordinator, spot_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, spot_id, "online")
+        self._attr_name = f"{self.spot_label} Online"
 
     @property
     def is_on(self) -> bool | None:

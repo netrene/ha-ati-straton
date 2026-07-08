@@ -185,7 +185,7 @@ class ATIStratonLampTimeSensor(ATIStratonEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Return lamp time."""
-        value = self.coordinator.data.timeinfo.get("tsWithTz")
+        value = self.coordinator.data.timeinfo.get("ts")
         return ms_timestamp(value)
 
 
@@ -308,6 +308,7 @@ class ATIStratonSpotTemperatureSensor(ATIStratonSpotEntity, SensorEntity):
     def __init__(self, coordinator: ATIStratonCoordinator, spot_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, spot_id, "temperature")
+        self._attr_name = f"{self.spot_label} Temperatur"
 
     @property
     def native_value(self) -> float | None:
@@ -341,6 +342,7 @@ class ATIStratonSpotLastUpdateSensor(ATIStratonSpotEntity, SensorEntity):
     def __init__(self, coordinator: ATIStratonCoordinator, spot_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, spot_id, "last_update")
+        self._attr_name = f"{self.spot_label} Letzte Aktualisierung"
 
     @property
     def native_value(self) -> datetime | None:
@@ -361,6 +363,9 @@ class ATIStratonTimelineIntensitySensor(ATIStratonEntity, SensorEntity):
         self.timeline_id = timeline_id
         name = _timeline_slug(coordinator, timeline_id)
         super().__init__(coordinator, f"group_{name}_intensity")
+        self._attr_name = (
+            f"{_timeline_name(coordinator, timeline_id)} geplante Intensitaet"
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -394,6 +399,9 @@ class ATIStratonTimelineNextChangeSensor(ATIStratonEntity, SensorEntity):
         self.timeline_id = timeline_id
         name = _timeline_slug(coordinator, timeline_id)
         super().__init__(coordinator, f"group_{name}_next_change")
+        self._attr_name = (
+            f"{_timeline_name(coordinator, timeline_id)} naechster Wechsel"
+        )
 
     @property
     def native_value(self) -> str | None:
@@ -421,6 +429,13 @@ def _timeline_slug(coordinator: ATIStratonCoordinator, timeline_id: str) -> str:
         if str(first_present(timeline, "_id")) == timeline_id:
             return slugify(str(timeline.get("name") or timeline_id))
     return slugify(timeline_id)
+
+
+def _timeline_name(coordinator: ATIStratonCoordinator, timeline_id: str) -> str:
+    for timeline in coordinator.data.timelines:
+        if str(first_present(timeline, "_id")) == timeline_id:
+            return str(timeline.get("name") or timeline_id)
+    return timeline_id
 
 
 def _timeline_attributes(timeline: dict[str, Any]) -> dict[str, Any]:

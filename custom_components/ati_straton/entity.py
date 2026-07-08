@@ -53,6 +53,18 @@ class ATIStratonSpotEntity(ATIStratonEntity):
         super().__init__(coordinator, f"spot_{spot_id}_{suffix}")
 
     @property
+    def spot_label(self) -> str:
+        """Return a concise user-facing spot label."""
+        spot = self.spot
+        name = first_present(spot, "name")
+        external_id = first_present(spot, "externalId")
+        if name:
+            return str(name).replace("_", " ")
+        if external_id:
+            return f"Spot {external_id}"
+        return f"Spot {self.spot_id}"
+
+    @property
     def spot(self) -> dict[str, Any] | None:
         """Return the current spot object."""
         for spot in self.coordinator.data.spots:
