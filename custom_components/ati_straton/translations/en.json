@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ATI Straton Flex",
+        "description": "Connect to the local ATI Straton Flex web interface.",
+        "data": {
+          "host": "Host or URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate ATI Straton Flex",
+        "description": "Update the credentials for the ATI Straton Flex at {host}.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "invalid_response": "Unexpected response from the lamp",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This lamp is already configured",
+      "reauth_entry_missing": "The configuration entry is no longer available",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "Connection"
+      },
+      "warning": {
+        "name": "Warning"
+      },
+      "danger": {
+        "name": "Danger"
+      },
+      "spot_online": {
+        "name": "Online"
+      }
+    },
+    "sensor": {
+      "device_type": {
+        "name": "Device type"
+      },
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "firmware_release": {
+        "name": "Firmware release"
+      },
+      "timezone": {
+        "name": "Timezone"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "lamp_time": {
+        "name": "Lamp time"
+      },
+      "last_update": {
+        "name": "Last update"
+      },
+      "adc": {
+        "name": "ADC"
+      },
+      "estimated_power": {
+        "name": "Estimated power"
+      },
+      "program_groups": {
+        "name": "Program groups"
+      },
+      "spot_temperature": {
+        "name": "Temperature"
+      },
+      "spot_last_update": {
+        "name": "Last update"
+      },
+      "timeline_intensity": {
+        "name": "Scheduled intensity"
+      },
+      "timeline_next_change": {
+        "name": "Next change"
+      }
+    }
+  }
+}

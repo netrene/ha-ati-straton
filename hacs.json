@@ -1,0 +1,6 @@
+{
+  "name": "ATI Straton Flex",
+  "render_readme": true,
+  "domains": ["ati_straton"],
+  "homeassistant": "2024.6.0"
+}

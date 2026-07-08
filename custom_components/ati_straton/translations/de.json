@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ATI Straton Flex",
+        "description": "Mit der lokalen ATI Straton Flex Weboberflaeche verbinden.",
+        "data": {
+          "host": "Host oder URL",
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      },
+      "reauth_confirm": {
+        "title": "ATI Straton Flex erneut authentifizieren",
+        "description": "Zugangsdaten fuer die ATI Straton Flex unter {host} aktualisieren.",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungueltige Zugangsdaten",
+      "invalid_response": "Unerwartete Antwort der Leuchte",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Diese Leuchte ist bereits eingerichtet",
+      "reauth_entry_missing": "Der Konfigurationseintrag ist nicht mehr verfuegbar",
+      "reauth_successful": "Die erneute Authentifizierung war erfolgreich"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "Verbindung"
+      },
+      "warning": {
+        "name": "Warnung"
+      },
+      "danger": {
+        "name": "Gefahr"
+      },
+      "spot_online": {
+        "name": "Online"
+      }
+    },
+    "sensor": {
+      "device_type": {
+        "name": "Geraetetyp"
+      },
+      "firmware_version": {
+        "name": "Firmware-Version"
+      },
+      "firmware_release": {
+        "name": "Firmware-Release"
+      },
+      "timezone": {
+        "name": "Zeitzone"
+      },
+      "uptime": {
+        "name": "Laufzeit"
+      },
+      "lamp_time": {
+        "name": "Leuchtenzeit"
+      },
+      "last_update": {
+        "name": "Letzte Aktualisierung"
+      },
+      "adc": {
+        "name": "ADC"
+      },
+      "estimated_power": {
+        "name": "Geschaetzte Leistung"
+      },
+      "program_groups": {
+        "name": "Programmgruppen"
+      },
+      "spot_temperature": {
+        "name": "Temperatur"
+      },
+      "spot_last_update": {
+        "name": "Letzte Aktualisierung"
+      },
+      "timeline_intensity": {
+        "name": "Geplante Intensitaet"
+      },
+      "timeline_next_change": {
+        "name": "Naechster Wechsel"
+      }
+    }
+  }
+}
