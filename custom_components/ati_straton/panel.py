@@ -21,7 +21,7 @@ from .coordinator import (
 PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
-PANEL_VERSION = "0.2.0"
+PANEL_VERSION = "0.2.1"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 

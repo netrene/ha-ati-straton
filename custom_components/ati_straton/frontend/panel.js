@@ -91,6 +91,13 @@ class ATIStratonProgramPanel extends HTMLElement {
   }
 
   _handleChange(event) {
+    const groupInput = event.target.closest('input[name="timeline"]');
+    if (groupInput) {
+      this._timelineId = groupInput.value;
+      this._render();
+      return;
+    }
+
     const select = event.target.closest("select");
     if (!select) {
       return;
@@ -101,10 +108,6 @@ class ATIStratonProgramPanel extends HTMLElement {
       this._timelineId = program?.timelines?.length ? String(program.timelines[0].id) : "";
       this._render();
       return;
-    }
-    if (select.name === "timeline") {
-      this._timelineId = select.value;
-      this._render();
     }
   }
 
@@ -326,7 +329,79 @@ class ATIStratonProgramPanel extends HTMLElement {
         }
 
         .chart-wrap {
-          padding: 12px 14px 18px;
+          padding: 12px 14px 12px;
+        }
+
+        .group-selector {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 8px;
+          padding: 0 14px 16px;
+        }
+
+        .group-check {
+          min-height: 48px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          border: 1px solid var(--straton-border);
+          border-radius: 8px;
+          padding: 9px 10px;
+          background: var(--straton-panel);
+          color: var(--straton-text);
+          cursor: pointer;
+          user-select: none;
+        }
+
+        .group-check input {
+          position: absolute;
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        .check-box {
+          width: 18px;
+          height: 18px;
+          flex: 0 0 auto;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--straton-border);
+          border-radius: 4px;
+          color: var(--text-primary-color, #061018);
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .group-check.active {
+          border-color: color-mix(in srgb, var(--straton-primary) 68%, transparent);
+          background: color-mix(in srgb, var(--straton-primary) 14%, var(--straton-panel));
+        }
+
+        .group-check.active .check-box {
+          border-color: var(--straton-primary);
+          background: var(--straton-primary);
+        }
+
+        .group-copy {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+        }
+
+        .group-copy strong,
+        .group-copy small {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .group-copy strong {
+          font-size: 13px;
+        }
+
+        .group-copy small {
+          color: var(--straton-muted);
+          font-size: 11px;
         }
 
         svg {
@@ -556,7 +631,6 @@ class ATIStratonProgramPanel extends HTMLElement {
           </div>
           <div class="actions">
             ${this._programSelect()}
-            ${this._timelineSelect(program)}
             <button class="primary" data-action="reload" ${this._loading ? "disabled" : ""}>
               Aktualisieren
             </button>
@@ -599,6 +673,7 @@ class ATIStratonProgramPanel extends HTMLElement {
             </div>
           </div>
           <div class="chart-wrap">${this._chart(timeline)}</div>
+          ${this._timelineChecks(program)}
         </section>
         <aside>
           <section class="surface side-section">
@@ -690,7 +765,7 @@ class ATIStratonProgramPanel extends HTMLElement {
           <div class="row">
             <div class="row-main">
               <div class="row-title">${this._escape(this._spotLabel(spot))}</div>
-              <div class="row-sub">${this._escape(spot.external_id || "")} · ${spot.temperature ?? "-"} °C</div>
+              <div class="row-sub">${this._escape(this._spotDetails(spot))}</div>
             </div>
             <span class="chip ${spot.online ? "ok" : "off"}">${spot.online ? "Online" : "Offline"}</span>
           </div>
@@ -769,23 +844,39 @@ class ATIStratonProgramPanel extends HTMLElement {
     `;
   }
 
-  _timelineSelect(program) {
+  _timelineChecks(program) {
     const timelines = program?.timelines || [];
-    if (!timelines.length) {
+    if (timelines.length <= 1) {
       return "";
     }
     return `
-      <select name="timeline" aria-label="Gruppe auswaehlen">
+      <div class="group-selector" aria-label="Gruppe auswaehlen">
         ${timelines
           .map(
-            (timeline) => `
-              <option value="${this._escape(String(timeline.id))}" ${String(timeline.id) === this._timelineId ? "selected" : ""}>
-                ${this._escape(timeline.name || timeline.id)}
-              </option>
-            `
+            (timeline) => {
+              const timelineId = String(timeline.id);
+              const selected = timelineId === this._timelineId;
+              const nodeCount = this._nodes(timeline).length;
+              const check = selected ? "✓" : "";
+              return `
+                <label class="group-check ${selected ? "active" : ""}">
+                  <input
+                    type="checkbox"
+                    name="timeline"
+                    value="${this._escape(timelineId)}"
+                    ${selected ? "checked" : ""}
+                  >
+                  <span class="check-box" aria-hidden="true">${check}</span>
+                  <span class="group-copy">
+                    <strong>${this._escape(timeline.name || timeline.id)}</strong>
+                    <small>${timeline.spots?.length || 0} Spots · ${nodeCount} Punkte</small>
+                  </span>
+                </label>
+              `;
+            }
           )
           .join("")}
-      </select>
+      </div>
     `;
   }
 
@@ -843,7 +934,34 @@ class ATIStratonProgramPanel extends HTMLElement {
   }
 
   _spotLabel(spot) {
-    return (spot.name || spot.custom_name || spot.external_id || "Spot").replaceAll("_", " ");
+    const externalId = String(spot.external_id || "");
+    const [deviceId, spotIndex] = externalId.split(":");
+    const customName = this._cleanSpotText(spot.custom_name);
+    const deviceName = customName || (deviceId ? `Straton ${deviceId}` : "");
+    const indexNumber = Number(spotIndex);
+    const spotNumber = Number.isFinite(indexNumber) ? indexNumber + 1 : spotIndex;
+
+    if (deviceName && spotNumber !== undefined && spotNumber !== "") {
+      return `${deviceName} · Spot ${spotNumber}`;
+    }
+    return deviceName || this._cleanSpotText(spot.name) || externalId || "Spot";
+  }
+
+  _spotDetails(spot) {
+    const parts = [];
+    const apiName = this._cleanSpotText(spot.name);
+    if (apiName) {
+      parts.push(`API: ${apiName}`);
+    }
+    if (spot.external_id) {
+      parts.push(spot.external_id);
+    }
+    parts.push(`${spot.temperature ?? "-"} °C`);
+    return parts.join(" · ");
+  }
+
+  _cleanSpotText(value) {
+    return String(value || "").replaceAll("_", " ").trim();
   }
 
   _formatNumber(value) {

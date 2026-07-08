@@ -61,7 +61,7 @@ The integration registers a read-only sidebar panel named `ATI Straton`.
 
 The panel displays the daily light curve from `/api/timelines`:
 
-- Program group selector
+- Program group checkboxes below the curve
 - SVG curve with time and intensity axes
 - Current-time marker
 - Support points with time, intensity, and color preset
