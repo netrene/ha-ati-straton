@@ -55,6 +55,22 @@ The first read-only version creates:
   - Current scheduled intensity
   - Next scheduled change
 
+## Sidebar program panel
+
+The integration registers a read-only sidebar panel named `ATI Straton`.
+
+The panel displays the daily light curve from `/api/timelines`:
+
+- Program group selector
+- SVG curve with time and intensity axes
+- Current-time marker
+- Support points with time, intensity, and color preset
+- Spot status and temperature for the selected group
+- Current color spectrum channel values
+
+The panel is intentionally read-only. It does not call `PUT /api/data`, demo,
+preview, network, firmware, reboot, or reset endpoints.
+
 ## Observed API endpoints
 
 Read-only endpoints used by this integration:

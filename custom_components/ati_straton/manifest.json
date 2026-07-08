@@ -3,11 +3,11 @@
   "name": "ATI Straton Flex",
   "codeowners": ["@netrene"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["http", "websocket_api", "frontend"],
   "documentation": "https://github.com/netrene/ha-ati-straton",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/netrene/ha-ati-straton/issues",
   "requirements": [],
-  "version": "0.1.1"
+  "version": "0.2.0"
 }

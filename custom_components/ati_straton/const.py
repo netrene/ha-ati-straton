@@ -14,3 +14,5 @@ DEFAULT_NAME = "ATI Straton Flex"
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 
 MANUFACTURER = "ATI Aquaristik"
+
+PANEL_URL = "ati-straton"
