@@ -38,6 +38,7 @@ async def async_setup_entry(
     coordinator: ATIStratonCoordinator = hass.data[DOMAIN][entry.entry_id]
     known_spots: set[str] = set()
     known_timelines: set[str] = set()
+    known_par: set[str] = set()
 
     async_add_entities(
         [
@@ -106,6 +107,15 @@ async def async_setup_entry(
                 entities.append(
                     ATIStratonTimelineNextChangeSensor(coordinator, timeline_key)
                 )
+
+        for par_entry in coordinator.data.par_table:
+            label = par_entry.get("label")
+            if label in (None, ""):
+                continue
+            par_key = str(label)
+            if par_key not in known_par:
+                known_par.add(par_key)
+                entities.append(ATIStratonParSensor(coordinator, par_key))
         if entities:
             async_add_entities(entities)
 
@@ -250,13 +260,51 @@ class ATIStratonPowerSensor(ATIStratonEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        """Return the watt value used by the ATI web UI."""
-        try:
-            adc = float(self.coordinator.data.current.get("adc"))
-        except (TypeError, ValueError):
+        """Return estimated power in watts (ADC / 5.5, verified 2026-07-19)."""
+        return self.coordinator.data.estimated_watts
+
+
+class ATIStratonParSensor(ATIStratonEntity, SensorEntity):
+    """Calculated PAR at a given water depth.
+
+    The lamp does not measure PAR directly. The web UI derives it from the
+    current power draw times a depth factor from ``/api/par-table`` (verified
+    2026-07-19: PAR@depth ≈ watts × factor, e.g. 34 W × 3 = 102 @ 30 cm).
+    """
+
+    _attr_icon = "mdi:sun-wireless"
+    _attr_native_unit_of_measurement = "µmol/m²/s"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ATIStratonCoordinator, label: str) -> None:
+        """Initialize the sensor."""
+        self._label = label
+        super().__init__(coordinator, f"par_{slugify(label)}")
+        self._attr_name = f"PAR {label}"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return PAR = estimated watts × depth factor."""
+        watts = self.coordinator.data.estimated_watts
+        factor = self._factor
+        if watts is None or factor is None:
             return None
-        value = round(0.00025 * adc / 8 * 24 / 0.004)
-        return max(0, int(value))
+        return max(0, round(watts * factor))
+
+    @property
+    def _factor(self) -> float | None:
+        for entry in self.coordinator.data.par_table:
+            if str(entry.get("label")) == self._label:
+                try:
+                    return float(entry.get("factor"))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the depth label and factor."""
+        return {"depth": self._label, "factor": self._factor}
 
 
 class ATIStratonProgramGroupsSensor(ATIStratonEntity, SensorEntity):

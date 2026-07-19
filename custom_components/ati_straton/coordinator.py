@@ -63,6 +63,19 @@ class ATIStratonData:
         """Return active timelines."""
         return [line for line in self.timelines if line.get("active", True)]
 
+    @property
+    def estimated_watts(self) -> int | None:
+        """Return estimated total power in watts.
+
+        Verified 2026-07-19 against the live web UI: watts ≈ current ADC / 5.5
+        (e.g. adc 187 → 34 W).
+        """
+        try:
+            adc = float(self.current.get("adc"))
+        except (TypeError, ValueError):
+            return None
+        return max(0, round(adc / 5.5))
+
 
 class ATIStratonCoordinator(DataUpdateCoordinator[ATIStratonData]):
     """Coordinate local ATI Straton polling."""
@@ -145,6 +158,19 @@ def external_device_id(value: Any) -> str | None:
     if value in (None, ""):
         return None
     return str(value).split(":", 1)[0]
+
+
+# Spot index → program section. Verified 2026-07-19: the spot index in the
+# externalId ("<serial>:<index>") maps identically on every lamp
+# (0=Links, 1=Mitte, 2=rechts; :3 is an unpopulated placeholder slot).
+SPOT_SECTIONS = {"0": "Links", "1": "Mitte", "2": "rechts"}
+
+
+def spot_section(value: Any) -> str | None:
+    """Return the program section (Links/Mitte/rechts) for an ATI external ID."""
+    if value in (None, "") or ":" not in str(value):
+        return None
+    return SPOT_SECTIONS.get(str(value).split(":", 1)[1])
 
 
 def ms_timestamp(value: Any) -> datetime | None:

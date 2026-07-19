@@ -8,7 +8,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
-from .coordinator import ATIStratonCoordinator, external_device_id, first_present
+from .coordinator import (
+    ATIStratonCoordinator,
+    external_device_id,
+    first_present,
+    spot_section,
+)
 
 
 class ATIStratonEntity(CoordinatorEntity[ATIStratonCoordinator]):
@@ -54,10 +59,17 @@ class ATIStratonSpotEntity(ATIStratonEntity):
 
     @property
     def spot_label(self) -> str:
-        """Return a concise user-facing spot label."""
+        """Return a concise user-facing spot label.
+
+        Prefers the program section (Links/Mitte/rechts) derived from the spot's
+        externalId, since the spot device is already the physical lamp.
+        """
         spot = self.spot
-        name = first_present(spot, "name")
         external_id = first_present(spot, "externalId")
+        section = spot_section(external_id)
+        if section:
+            return section
+        name = first_present(spot, "name")
         if name:
             return str(name).replace("_", " ")
         if external_id:
