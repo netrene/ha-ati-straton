@@ -23,7 +23,7 @@ PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
 # Bump on every panel.js change to bust the browser cache and re-register.
-PANEL_VERSION = "0.8.0"
+PANEL_VERSION = "0.9.0"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 

@@ -50,6 +50,9 @@ class ATIStratonProgramPanel extends HTMLElement {
     this._tplStart = 9; // hours
     this._tplDur = 11; // hours
     this._tplPal = null; // palette name
+    this._cloudDepth = 15; // %
+    this._cloudDensity = 3; // dips per hour
+    this._rampDur = 45; // minutes
   }
 
   set hass(hass) {
@@ -191,6 +194,14 @@ class ATIStratonProgramPanel extends HTMLElement {
       this._adjustTpl(btn.dataset.field, Number(btn.dataset.d));
     } else if (a === "tplapply") {
       this._applyTpl(btn.dataset.key);
+    } else if (a === "toolstep") {
+      this._adjustTool(btn.dataset.field, Number(btn.dataset.d));
+    } else if (a === "cloudapply") {
+      this._applyClouds();
+    } else if (a === "rampapply") {
+      this._applyRamp();
+    } else if (a === "shift") {
+      this._shiftCurve(Number(btn.dataset.d));
     }
   }
 
@@ -477,12 +488,148 @@ class ATIStratonProgramPanel extends HTMLElement {
     }
     const ttab = (id, label) => `<button class="ttab ${this._tool === id ? "on" : ""}" data-action="tool" data-tool="${id}">${label}</button>`;
     const tabs = `<div class="tooltabs">${ttab("vorlagen", "Vorlagen")}${ttab("wolken", "Wolken")}${ttab("raender", "Ränder")}${ttab("zeit", "Zeit")}</div>`;
-    const body = this._tool === "vorlagen"
-      ? this._toolVorlagen(colors)
-      : `<p class="muted" style="padding:8px 2px">${this._esc(this._toolName(this._tool))} — kommt als Nächstes.</p>`;
+    const body =
+      this._tool === "vorlagen" ? this._toolVorlagen(colors)
+      : this._tool === "wolken" ? this._toolWolken()
+      : this._tool === "raender" ? this._toolRaender()
+      : this._tool === "zeit" ? this._toolZeit()
+      : "";
     return `<section class="card pad"><p class="label" style="margin:0 0 10px">Werkzeuge</p>${tabs}<div class="toolbody">${body}</div></section>`;
   }
-  _toolName(t) { return { wolken: "Wolken einbacken", raender: "Ränder weichzeichnen", zeit: "Kurve zeitlich verschieben" }[t] || t; }
+
+  _toolWolken() {
+    const step = (field, label, value) => `
+      <div class="stepper-row"><span class="sl">${label}</span>
+        <button class="sbtn" data-action="toolstep" data-field="${field}" data-d="-1">−</button>
+        <span class="sval">${value}</span>
+        <button class="sbtn" data-action="toolstep" data-field="${field}" data-d="1">+</button></div>`;
+    return `
+      <p class="muted" style="margin:0 0 12px">Zickzack-Wolken ins Fenster <b>10–16 Uhr</b> backen. Die Baseline wird abwechselnd um „Tiefe" abgesenkt.</p>
+      <div class="tpl-inputs">${step("depth", "Tiefe", "−" + this._cloudDepth + " %")}${step("density", "Dichte", this._cloudDensity + " / h")}</div>
+      <button class="btn full" data-action="cloudapply">Wolken einfügen (10–16 Uhr)</button>`;
+  }
+  _toolRaender() {
+    const step = `
+      <div class="stepper-row"><span class="sl">Dauer</span>
+        <button class="sbtn" data-action="toolstep" data-field="rampdur" data-d="-1">−</button>
+        <span class="sval">${this._rampDur} Min</span>
+        <button class="sbtn" data-action="toolstep" data-field="rampdur" data-d="1">+</button></div>`;
+    return `
+      <p class="muted" style="margin:0 0 12px">Sonnenauf-/-untergänge weichzeichnen: an jeder 0↔Wert-Kante werden sanfte Zwischenpunkte (Smoothstep) eingefügt.</p>
+      <div class="tpl-inputs">${step}</div>
+      <button class="btn full" data-action="rampapply">Enden weichzeichnen</button>`;
+  }
+  _toolZeit() {
+    return `
+      <p class="muted" style="margin:0 0 12px">Ganze Kurve zeitlich verschieben — die Endpunkte (0 / 24 Uhr) bleiben.</p>
+      <div class="btn-row">
+        <button class="btn" data-action="shift" data-d="-1">‹ 1 h</button>
+        <button class="btn" data-action="shift" data-d="-0.25">‹ 15 min</button>
+        <button class="btn" data-action="shift" data-d="0.25">15 min ›</button>
+        <button class="btn" data-action="shift" data-d="1">1 h ›</button>
+      </div>`;
+  }
+  _adjustTool(field, d) {
+    if (field === "depth") this._cloudDepth = Math.max(5, Math.min(40, this._cloudDepth + d * 5));
+    else if (field === "density") this._cloudDensity = Math.max(1, Math.min(4, this._cloudDensity + d));
+    else if (field === "rampdur") this._rampDur = Math.max(10, Math.min(90, this._rampDur + d * 5));
+    this._render();
+  }
+  _applyClouds() {
+    if (!this._edit) return;
+    const nodes = this._editNodes();
+    if (nodes.length < 2) return;
+    const w0 = 10 * 3600, w1 = 16 * 3600;
+    const depth = this._cloudDepth, perH = this._cloudDensity, stepSec = 3600 / perH;
+    const inside = [];
+    let k = 0;
+    for (let t = w0; t <= w1 + 1; t += stepSec) {
+      const base = this._interpValue(nodes, t);
+      const dip = k % 2 === 1 ? depth : 0;
+      inside.push({
+        type: "node", index: 0, time: Math.round(t), time_label: this._secToHHMM(t),
+        value: Math.max(0, Math.round((base - dip) * 4) / 4),
+        color: this._cloneColor(this._colorAt(nodes, t)),
+      });
+      k++;
+    }
+    const out = nodes.filter((n) => n.time < w0 - 1 || n.time > w1 + 1).concat(inside);
+    this._finalize(out);
+    this._edit.nodes = out;
+    this._sel = -1; this._dirty = true; this._render();
+  }
+  _applyRamp() {
+    if (!this._edit) return;
+    const nodes = this._editNodes();
+    const durSec = this._rampDur * 60, N = 3, out = [];
+    for (let i = 0; i < nodes.length; i++) {
+      out.push(nodes[i]);
+      const a = nodes[i], b = nodes[i + 1];
+      if (!b) continue;
+      const rising = a.value === 0 && b.value > 0;
+      const falling = a.value > 0 && b.value === 0;
+      if (!rising && !falling) continue;
+      const span = Math.min(durSec, b.time - a.time);
+      for (let s = 1; s <= N; s++) {
+        const f = s / (N + 1), ss = f * f * (3 - 2 * f);
+        const tt = rising ? b.time - span + f * span : a.time + f * span;
+        const ease = rising ? ss : 1 - ss;
+        const vv = rising ? ease * b.value : ease * a.value;
+        out.push({
+          type: "node", index: 0, time: Math.round(tt), time_label: this._secToHHMM(Math.round(tt)),
+          value: Math.round(vv * 4) / 4, color: this._cloneColor(rising ? b.color : a.color),
+        });
+      }
+    }
+    this._finalize(out);
+    this._edit.nodes = out;
+    this._sel = -1; this._dirty = true; this._render();
+  }
+  _shiftCurve(dh) {
+    if (!this._edit) return;
+    const nodes = this._editNodes();
+    if (nodes.length < 3) return;
+    let d = dh * 3600;
+    const i0 = 1, i1 = nodes.length - 2;
+    if (nodes[i0].time + d < 360) d = 360 - nodes[i0].time;
+    if (nodes[i1].time + d > 86040) d = 86040 - nodes[i1].time;
+    if (Math.abs(d) < 1) return;
+    for (let i = i0; i <= i1; i++) {
+      nodes[i].time = Math.round(nodes[i].time + d);
+      nodes[i].time_label = this._secToHHMM(nodes[i].time);
+    }
+    this._finalize(nodes);
+    this._dirty = true; this._render();
+  }
+  _interpValue(nodes, t) {
+    if (!nodes.length) return 0;
+    if (t <= nodes[0].time) return Number(nodes[0].value) || 0;
+    for (let i = 1; i < nodes.length; i++) {
+      if (t <= nodes[i].time) {
+        const a = nodes[i - 1], b = nodes[i], span = (b.time - a.time) || 1;
+        return (Number(a.value) || 0) + ((Number(b.value) || 0) - (Number(a.value) || 0)) * ((t - a.time) / span);
+      }
+    }
+    return Number(nodes[nodes.length - 1].value) || 0;
+  }
+  _colorAt(nodes, t) {
+    let c = nodes[0] && nodes[0].color;
+    for (const n of nodes) if ((n.time || 0) <= t) c = n.color;
+    return c;
+  }
+  _cloneColor(c) {
+    return c
+      ? { id: c.id, name: c.name, bgColor: c.bgColor, values: (c.values || []).slice() }
+      : { id: null, name: "–", bgColor: "var(--acc)", values: [] };
+  }
+  _finalize(nodes) {
+    nodes.sort((a, b) => a.time - b.time);
+    nodes.forEach((n, i) => {
+      n.type = i === 0 ? "first" : i === nodes.length - 1 ? "last" : "node";
+      n.index = i;
+    });
+    return nodes;
+  }
 
   _toolVorlagen(colors) {
     const dur = Math.min(this._tplDur, 24 - this._tplStart);
@@ -526,9 +673,7 @@ class ATIStratonProgramPanel extends HTMLElement {
     if (start > 0.02) nodes.push(mk(0, 0));
     shape.forEach((a) => nodes.push(mk(start + a[0] * dur, a[1])));
     if (start + dur < 23.98) nodes.push(mk(24, 0));
-    nodes[0].type = "first";
-    nodes[nodes.length - 1].type = "last";
-    nodes.forEach((n, i) => (n.index = i));
+    this._finalize(nodes);
     this._edit.nodes = nodes;
     this._sel = Math.min(1, nodes.length - 1);
     this._dirty = true;
@@ -682,6 +827,9 @@ class ATIStratonProgramPanel extends HTMLElement {
       .tpl-row:hover { border-color: color-mix(in srgb, var(--acc) 45%, var(--border)); }
       .tpl-mini { flex: 0 0 auto; width: 72px; height: 34px; display: block; }
       .tpl-txt { display: flex; flex-direction: column; gap: 2px; } .tpl-txt b { font-size: 13.5px; } .tpl-txt span { font-size: 11.5px; color: var(--muted); }
+      .btn.full { width: 100%; }
+      .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .btn-row .btn { flex: 1; min-width: 88px; }
       .spectrum { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
       .chan { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
       .cn { font-family: ui-monospace, monospace; font-weight: 700; } .cv { text-align: right; font-family: ui-monospace, monospace; }
