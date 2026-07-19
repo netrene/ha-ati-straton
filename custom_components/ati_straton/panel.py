@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant, callback
 
+from .api import ATIStratonApiError, ATIStratonResponseError, ATIStratonWriteDisabled
 from .const import DOMAIN, PANEL_URL
 from .coordinator import (
     ATIStratonCoordinator,
@@ -23,11 +25,12 @@ PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
 # Bump on every panel.js change to bust the browser cache and re-register.
-PANEL_VERSION = "0.9.0"
+PANEL_VERSION = "0.10.0"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 
 WS_PROGRAM_LIST = f"{DOMAIN}/program/list"
+WS_PROGRAM_SAVE = f"{DOMAIN}/program/save"
 
 PANEL_REGISTERED_VERSION = "__panel_registered_version"
 STATIC_REGISTERED = "__static_registered"
@@ -47,6 +50,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
 
     if not data.get(WEBSOCKET_REGISTERED):
         websocket_api.async_register_command(hass, websocket_program_list)
+        websocket_api.async_register_command(hass, websocket_program_save)
         data[WEBSOCKET_REGISTERED] = True
 
     frontend_panels = hass.data.get("frontend_panels", {})
@@ -99,6 +103,88 @@ async def websocket_program_list(
     connection.send_result(msg["id"], {"programs": programs})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_PROGRAM_SAVE,
+        vol.Required("entry_id"): str,
+        vol.Required("timeline_id"): vol.Coerce(int),
+        vol.Required("nodes"): [dict],
+    }
+)
+@websocket_api.async_response
+async def websocket_program_save(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Persist an edited group's curve (the panel editor's Save).
+
+    Read-modify-write done here against the coordinator's current data: only the
+    edited timeline's ``nodes`` are replaced; spots and colors are passed back
+    opaque. Guarded — the client refuses the write unless write access is on.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(msg["entry_id"])
+    if not isinstance(coordinator, ATIStratonCoordinator):
+        connection.send_error(msg["id"], "not_found", "ATI Straton entry not found")
+        return
+    try:
+        await _apply_saved_nodes(coordinator, msg["timeline_id"], msg["nodes"])
+    except ATIStratonWriteDisabled:
+        connection.send_error(
+            msg["id"], "write_disabled", "Schreibzugriff ist deaktiviert."
+        )
+        return
+    except ATIStratonResponseError as err:
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+    except ATIStratonApiError as err:
+        connection.send_error(msg["id"], "write_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"ok": True})
+
+
+async def _apply_saved_nodes(
+    coordinator: ATIStratonCoordinator,
+    timeline_id: int,
+    nodes: list[dict[str, Any]],
+) -> None:
+    """Build raw nodes from the editor payload and write the full program."""
+    data = coordinator.data
+    if not nodes:
+        raise ATIStratonResponseError("No nodes to save")
+
+    colors_by_id = {c.get("_id"): c.get("name") for c in data.colors}
+    timelines = copy.deepcopy(data.timelines)
+    target = next(
+        (t for t in timelines if str(t.get("_id")) == str(timeline_id)), None
+    )
+    if target is None:
+        raise ATIStratonResponseError(f"Timeline {timeline_id} not found")
+
+    count = len(nodes)
+    raw_nodes: list[dict[str, Any]] = []
+    for index, node in enumerate(nodes):
+        try:
+            time_s = max(0, min(86400, int(round(float(node.get("time"))))))
+            value = max(0.0, min(100.0, float(node.get("value"))))
+        except (TypeError, ValueError) as err:
+            raise ATIStratonResponseError("Invalid node time/value") from err
+        color_id = node.get("color_id")
+        node_type = "first" if index == 0 else "last" if index == count - 1 else "node"
+        raw_nodes.append(
+            {
+                "time": time_s,
+                "value": value,
+                "type": node_type,
+                "index": index,
+                "color": {"_id": color_id, "name": colors_by_id.get(color_id)},
+            }
+        )
+
+    target["nodes"] = raw_nodes
+    await coordinator.async_apply_timelines(timelines)
+
+
 def _program_payload(entry_id: str, coordinator: ATIStratonCoordinator) -> dict[str, Any]:
     """Return a frontend-friendly program payload."""
     data = coordinator.data
@@ -117,6 +203,7 @@ def _program_payload(entry_id: str, coordinator: ATIStratonCoordinator) -> dict[
             "warning": data.current.get("isWarning"),
             "danger": data.current.get("isDanger"),
         },
+        "write_enabled": coordinator.client.write_enabled,
         "par": _par_payload(data),
         "lamps": _lamps_payload(data),
         "spots": [_spot_payload(spot) for spot in data.spots],

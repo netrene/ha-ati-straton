@@ -53,6 +53,7 @@ class ATIStratonProgramPanel extends HTMLElement {
     this._cloudDepth = 15; // %
     this._cloudDensity = 3; // dips per hour
     this._rampDur = 45; // minutes
+    this._saving = false;
   }
 
   set hass(hass) {
@@ -202,6 +203,8 @@ class ATIStratonProgramPanel extends HTMLElement {
       this._applyRamp();
     } else if (a === "shift") {
       this._shiftCurve(Number(btn.dataset.d));
+    } else if (a === "save") {
+      this._save();
     }
   }
 
@@ -695,12 +698,53 @@ class ATIStratonProgramPanel extends HTMLElement {
   _fmtDur(h) { return (h % 1 === 0 ? String(h) : h.toFixed(1)) + " h"; }
 
   _saveBar() {
+    const canWrite = !!(this._program() && this._program().write_enabled);
+    const saving = this._saving;
+    const saveBtn = canWrite
+      ? `<button class="btn primary" data-action="save" ${saving ? "disabled" : ""}>${saving ? "Speichert…" : "Speichern"}</button>`
+      : `<button class="btn primary" disabled title="Schreibzugriff in den Integrations-Optionen aktivieren">Speichern</button>`;
+    const sub = canWrite
+      ? "Wird dauerhaft in die Leuchte geschrieben"
+      : "Nur lokal — Schreibzugriff in den Optionen aktivieren";
     return `
       <div class="savebar"><div class="sb-inner">
-        <div class="sb-t">Ungespeicherte Änderungen<span>Nur lokal — Speichern in die Leuchte kommt mit R2 (Schreibzugriff)</span></div>
-        <button class="btn" data-action="discard">Verwerfen</button>
-        <button class="btn primary" disabled title="Schreibzugriff nötig (R2)">Speichern</button>
+        <div class="sb-t">Ungespeicherte Änderungen<span>${sub}</span></div>
+        <button class="btn" data-action="discard" ${saving ? "disabled" : ""}>Verwerfen</button>
+        ${saveBtn}
       </div></div>`;
+  }
+
+  _save() {
+    const program = this._program();
+    if (!program || !program.write_enabled || !this._edit || !this._dirty || this._saving) return;
+    const tid = Number(this._edit.tid);
+    const nodes = this._editNodes().map((n) => ({
+      time: Math.round(Number(n.time) || 0),
+      value: Number(n.value) || 0,
+      color_id: n.color && n.color.id,
+    }));
+    this._saving = true;
+    this._render();
+    this._hass.connection
+      .sendMessagePromise({
+        type: "ati_straton/program/save",
+        entry_id: this._entryId,
+        timeline_id: tid,
+        nodes,
+      })
+      .then(() => {
+        this._saving = false;
+        this._dirty = false;
+        this._edit = null;
+        this._sel = -1;
+        this._error = "";
+        this._load();
+      })
+      .catch((err) => {
+        this._saving = false;
+        this._error = (err && err.message) || "Speichern fehlgeschlagen.";
+        this._render();
+      });
   }
 
   // ---------- helpers ----------
