@@ -27,7 +27,10 @@ Abgeleitet aus `HANDOVER-2026-07-19-app-session.md` (Punkte A–F) + Abgleich mi
 - **Phase 2 — Fundament (kein realer Write):** ✅ **v0.4.0** — Options-Flow (`write_enabled` Default AUS, `scan_interval`, `auto_save`) + gated `api.put_data()` (`PUT /api/data`, `spots` opak) + Coordinator-RMW-Helfer `async_apply_timelines()`. Debounce kommt mit der ersten Control-Entity (Phase 3).
 - **Phase 3 — Erste Steuerung (⚠️ reale Hardware, nur live mit Rene):** `light.straton_<gruppe>` ON/OFF (`timeline.active`) + Dimmen (Node-`value`) via `PUT /api/data`; zuerst rechts/0 %.
 - **Phase 4 — Koexistenz & Live:** Single-Session-Pausier-Schalter; `python-socketio`-Client (`temperature-spots`/`changed-intensity`) statt/zusätzlich 30 s-Poll; Spot-Identität dann auf `externalId` re-keyen; ermöglicht transientes Live-Dimmen (`update-node`) für Override/Mondlicht.
-- **Phase 5 — Komfort & UX:** mDNS-Discovery (A); Panel-Cockpit-Redesign (F); `number`/`select`/`button` (Kanäle, Profile via `/api/presettings`, Speichern).
+- **Panel-Cockpit-Redesign (F):**
+  - **R1 — Read-only-Cockpit** ✅ **v0.5.0**: neue `frontend/panel.js` (Übersicht + Programm-Kurve) live an `program/list`, HA-theme-aware (Nebentöne via `color-mix` aus HA-Vars). Payload um `par` erweitert, Watt in `panel.py` auf `adc/5.5` gefixt, `PANEL_VERSION`-Bump (cache-bust). Kein Write.
+  - **R2 — Editor mit Schreiben** *(offen)*: Punkte ziehen/bearbeiten → neuer WS-Befehl `ati_straton/program/save` → `coordinator.async_apply_timelines()` (hinter `write_enabled`, Debounce), zuerst rechts/0 %. = die eigentliche Phase-3-Steuerung, im Panel statt als `light`-Entity.
+- **Phase 5 — Komfort:** mDNS-Discovery (A); `number`/`select`/`button` bzw. Panel-Aktionen (Kanäle, Profile via `/api/presettings`).
 
 ## Guardrails
 - Config-Entry ist **bewusst deaktiviert** → nur auf ausdrückliche Ansage reaktivieren. Live-Test nur, wenn die App **nicht** verbunden ist (Single-Session-Limit).

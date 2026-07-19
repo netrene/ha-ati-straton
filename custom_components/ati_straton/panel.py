@@ -21,7 +21,8 @@ from .coordinator import (
 PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
-PANEL_VERSION = "0.2.1"
+# Bump on every panel.js change to bust the browser cache and re-register.
+PANEL_VERSION = "0.5.0"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 
@@ -111,10 +112,11 @@ def _program_payload(entry_id: str, coordinator: ATIStratonCoordinator) -> dict[
         },
         "current": {
             "adc": data.current.get("adc"),
-            "estimated_power": _estimated_power(data.current.get("adc")),
+            "estimated_power": data.estimated_watts,
             "warning": data.current.get("isWarning"),
             "danger": data.current.get("isDanger"),
         },
+        "par": _par_payload(data),
         "spots": [_spot_payload(spot) for spot in data.spots],
         "colors": [_color_payload(color) for color in data.colors],
         "timelines": [_timeline_payload(timeline) for timeline in data.timelines],
@@ -217,12 +219,24 @@ def _timezone_name(timeinfo: dict[str, Any]) -> str | None:
     return None
 
 
-def _estimated_power(adc: Any) -> int | None:
-    try:
-        value = float(adc)
-    except (TypeError, ValueError):
-        return None
-    return max(0, int(round(0.00025 * value / 8 * 24 / 0.004)))
+def _par_payload(data: Any) -> list[dict[str, Any]]:
+    """Return PAR per depth (watts × depth factor), verified 2026-07-19."""
+    watts = data.estimated_watts
+    result: list[dict[str, Any]] = []
+    for entry in data.par_table:
+        try:
+            factor = float(entry.get("factor"))
+        except (TypeError, ValueError):
+            factor = None
+        value = (
+            max(0, round(watts * factor))
+            if watts is not None and factor is not None
+            else None
+        )
+        result.append(
+            {"label": entry.get("label"), "factor": factor, "value": value}
+        )
+    return result
 
 
 def _time_to_text(value: Any) -> str | None:

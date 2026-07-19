@@ -1,24 +1,42 @@
+// ATI Straton — read-only cockpit panel (R1).
+// Live data via the `ati_straton/program/list` websocket command. No writes.
+// Design adapted from the app-session mockup (aqua cockpit, theme-aware).
+
+const CHANNEL_COLORS = {
+  UV: "#7c4dff",
+  V: "#a341e0",
+  RB: "#2f5bff",
+  B: "#1e9bf0",
+  LC: "#22c1d6",
+  C: "#22c1d6",
+  W: "#c9d4dc",
+  R: "#ff5a5a",
+};
+
+// The lamp calls the cyan channel "LC" internally; the ATI UI shows it as "C".
+const channelLabel = (name) => (name === "LC" ? "C" : name);
+
 class ATIStratonProgramPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
+    this._narrow = false;
     this._loaded = false;
     this._loading = false;
     this._error = "";
     this._programs = [];
     this._entryId = "";
     this._timelineId = "";
-    this._narrow = false;
+    this._view = "overview";
+    this._timer = null;
   }
 
   set hass(hass) {
     this._hass = hass;
     if (!this._loaded && !this._loading) {
       this._load();
-      return;
     }
-    this._render();
   }
 
   get hass() {
@@ -35,969 +53,515 @@ class ATIStratonProgramPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this.shadowRoot.addEventListener("click", (event) => this._handleClick(event));
-    this.shadowRoot.addEventListener("change", (event) => this._handleChange(event));
+    this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
+    this.shadowRoot.addEventListener("change", (e) => this._onChange(e));
     this._render();
+    this._timer = setInterval(() => {
+      if (this._hass && !this._loading) this._load();
+    }, 10000);
+  }
+
+  disconnectedCallback() {
+    if (this._timer) clearInterval(this._timer);
+    this._timer = null;
   }
 
   async _load() {
-    if (!this._hass) {
-      return;
-    }
+    if (!this._hass) return;
     this._loading = true;
-    this._error = "";
-    this._render();
-
+    if (!this._loaded) this._render();
     try {
       const result = await this._hass.connection.sendMessagePromise({
         type: "ati_straton/program/list",
       });
-      this._programs = result.programs || [];
-      if (!this._entryId && this._programs.length > 0) {
+      this._programs = (result && result.programs) || [];
+      this._error = "";
+      if (!this._entryId && this._programs.length) {
         this._entryId = this._programs[0].entry_id;
       }
-      const program = this._selectedProgram();
-      if (!this._timelineId && program?.timelines?.length > 0) {
+      const program = this._program();
+      if (program && !this._selectedTimeline() && program.timelines.length) {
         this._timelineId = String(program.timelines[0].id);
       }
       this._loaded = true;
-    } catch (error) {
-      this._error = error.message || "Straton Programm konnte nicht geladen werden.";
+    } catch (err) {
+      this._error = (err && err.message) || "Programm konnte nicht geladen werden.";
     } finally {
       this._loading = false;
       this._render();
     }
   }
 
-  async _reload() {
-    this._loaded = false;
-    await this._load();
-  }
-
-  _handleClick(event) {
-    const button = event.target.closest("button");
-    if (!button?.dataset.action) {
-      return;
-    }
-    if (button.dataset.action === "menu") {
-      this.dispatchEvent(
-        new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })
-      );
-      return;
-    }
-    if (button.dataset.action === "reload") {
-      this._reload();
-    }
-  }
-
-  _handleChange(event) {
-    const groupInput = event.target.closest('input[name="timeline"]');
-    if (groupInput) {
-      this._timelineId = groupInput.value;
-      this._render();
-      return;
-    }
-
-    const select = event.target.closest("select");
-    if (!select) {
-      return;
-    }
-    if (select.name === "program") {
-      this._entryId = select.value;
-      const program = this._selectedProgram();
-      this._timelineId = program?.timelines?.length ? String(program.timelines[0].id) : "";
-      this._render();
-      return;
-    }
-  }
-
-  _selectedProgram() {
-    return this._programs.find((program) => program.entry_id === this._entryId);
+  _program() {
+    return (
+      this._programs.find((p) => p.entry_id === this._entryId) ||
+      this._programs[0]
+    );
   }
 
   _selectedTimeline() {
-    const program = this._selectedProgram();
-    return program?.timelines?.find((timeline) => String(timeline.id) === this._timelineId);
+    const program = this._program();
+    if (!program) return null;
+    return (
+      program.timelines.find((t) => String(t.id) === this._timelineId) || null
+    );
   }
 
+  _onClick(event) {
+    const btn = event.target.closest("[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === "menu") {
+      this.dispatchEvent(
+        new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })
+      );
+    } else if (action === "reload") {
+      this._loaded = false;
+      this._load();
+    } else if (action === "view") {
+      this._view = btn.dataset.view;
+      this._render();
+    } else if (action === "tab") {
+      this._timelineId = btn.dataset.id;
+      this._render();
+    }
+  }
+
+  _onChange(event) {
+    const select = event.target.closest('select[name="program"]');
+    if (select) {
+      this._entryId = select.value;
+      this._timelineId = "";
+      const program = this._program();
+      if (program && program.timelines.length) {
+        this._timelineId = String(program.timelines[0].id);
+      }
+      this._render();
+    }
+  }
+
+  // ---------- rendering ----------
+
   _render() {
-    const program = this._selectedProgram();
-    const timeline = this._selectedTimeline();
-
+    const program = this._program();
     this.shadowRoot.innerHTML = `
-      <style>
-        :host {
-          --straton-card: var(--ha-card-background, var(--card-background-color, #1b1f24));
-          --straton-panel: rgba(255, 255, 255, 0.055);
-          --straton-border: rgba(255, 255, 255, 0.1);
-          --straton-muted: var(--secondary-text-color, #9aa6b2);
-          --straton-text: var(--primary-text-color, #f5f7fa);
-          --straton-primary: var(--primary-color, #03a9f4);
-          display: block;
-          min-height: 100vh;
-          background: var(--primary-background-color, #101418);
-          color: var(--straton-text);
-          font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        }
-
-        * {
-          box-sizing: border-box;
-        }
-
-        .page {
-          width: min(1180px, calc(100vw - 28px));
-          margin: 0 auto;
-          padding: 30px 0 42px;
-        }
-
-        .menu-button {
-          position: fixed;
-          top: 8px;
-          left: 8px;
-          z-index: 2;
-          width: 44px;
-          height: 44px;
-          display: none;
-          place-items: center;
-          border: 0;
-          border-radius: 50%;
-          background: transparent;
-          color: var(--primary-text-color, #eaeaea);
-          padding: 0;
-        }
-
-        .menu-icon,
-        .menu-icon::before,
-        .menu-icon::after {
-          display: block;
-          width: 20px;
-          height: 2px;
-          border-radius: 99px;
-          background: currentColor;
-        }
-
-        .menu-icon {
-          position: relative;
-        }
-
-        .menu-icon::before,
-        .menu-icon::after {
-          content: "";
-          position: absolute;
-          left: 0;
-        }
-
-        .menu-icon::before {
-          top: -6px;
-        }
-
-        .menu-icon::after {
-          top: 6px;
-        }
-
-        header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-end;
-          gap: 18px;
-          margin-bottom: 20px;
-        }
-
-        .kicker {
-          color: var(--straton-primary);
-          font-size: 12px;
-          font-weight: 750;
-          letter-spacing: 1.2px;
-          text-transform: uppercase;
-        }
-
-        h1 {
-          margin: 5px 0 0;
-          font-size: 30px;
-          line-height: 1.1;
-          letter-spacing: 0;
-        }
-
-        .meta {
-          margin-top: 7px;
-          color: var(--straton-muted);
-          font-size: 14px;
-        }
-
-        .actions {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
-        button,
-        select {
-          min-height: 40px;
-          border: 1px solid var(--straton-border);
-          border-radius: 8px;
-          background: var(--straton-card);
-          color: var(--straton-text);
-          font: inherit;
-          font-size: 14px;
-        }
-
-        button {
-          cursor: pointer;
-          padding: 0 14px;
-        }
-
-        button.primary {
-          background: var(--straton-primary);
-          border-color: var(--straton-primary);
-          color: var(--text-primary-color, #061018);
-          font-weight: 750;
-        }
-
-        select {
-          min-width: 190px;
-          padding: 0 34px 0 12px;
-        }
-
-        .layout {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 320px;
-          gap: 16px;
-          align-items: start;
-        }
-
-        .surface {
-          background: var(--straton-card);
-          border: 1px solid var(--straton-border);
-          border-radius: 8px;
-          overflow: hidden;
-        }
-
-        .chart-head {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 14px;
-          padding: 16px 18px;
-          border-bottom: 1px solid var(--straton-border);
-        }
-
-        .chart-title {
-          min-width: 0;
-        }
-
-        .chart-title strong {
-          display: block;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          font-size: 18px;
-        }
-
-        .chart-title span {
-          display: block;
-          margin-top: 3px;
-          color: var(--straton-muted);
-          font-size: 13px;
-        }
-
-        .stats {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          border-bottom: 1px solid var(--straton-border);
-        }
-
-        .stat {
-          padding: 12px 16px;
-          border-right: 1px solid var(--straton-border);
-        }
-
-        .stat:last-child {
-          border-right: 0;
-        }
-
-        .stat-label {
-          color: var(--straton-muted);
-          font-size: 12px;
-        }
-
-        .stat-value {
-          margin-top: 4px;
-          font-size: 22px;
-          font-weight: 800;
-        }
-
-        .chart-wrap {
-          padding: 12px 14px 12px;
-        }
-
-        .group-selector {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-          gap: 8px;
-          padding: 0 14px 16px;
-        }
-
-        .group-check {
-          min-height: 48px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          border: 1px solid var(--straton-border);
-          border-radius: 8px;
-          padding: 9px 10px;
-          background: var(--straton-panel);
-          color: var(--straton-text);
-          cursor: pointer;
-          user-select: none;
-        }
-
-        .group-check input {
-          position: absolute;
-          opacity: 0;
-          pointer-events: none;
-        }
-
-        .check-box {
-          width: 18px;
-          height: 18px;
-          flex: 0 0 auto;
-          display: grid;
-          place-items: center;
-          border: 1px solid var(--straton-border);
-          border-radius: 4px;
-          color: var(--text-primary-color, #061018);
-          font-size: 13px;
-          font-weight: 900;
-        }
-
-        .group-check.active {
-          border-color: color-mix(in srgb, var(--straton-primary) 68%, transparent);
-          background: color-mix(in srgb, var(--straton-primary) 14%, var(--straton-panel));
-        }
-
-        .group-check.active .check-box {
-          border-color: var(--straton-primary);
-          background: var(--straton-primary);
-        }
-
-        .group-copy {
-          min-width: 0;
-          display: grid;
-          gap: 2px;
-        }
-
-        .group-copy strong,
-        .group-copy small {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .group-copy strong {
-          font-size: 13px;
-        }
-
-        .group-copy small {
-          color: var(--straton-muted);
-          font-size: 11px;
-        }
-
-        svg {
-          display: block;
-          width: 100%;
-          height: auto;
-        }
-
-        .grid-line {
-          stroke: rgba(255, 255, 255, 0.08);
-          stroke-width: 1;
-        }
-
-        .axis-label {
-          fill: var(--straton-muted);
-          font-size: 11px;
-        }
-
-        .curve {
-          fill: none;
-          stroke: var(--line-color);
-          stroke-width: 3;
-          stroke-linejoin: round;
-          stroke-linecap: round;
-        }
-
-        .area {
-          fill: var(--line-color);
-          opacity: 0.13;
-        }
-
-        .node {
-          fill: var(--color);
-          stroke: var(--straton-card);
-          stroke-width: 3;
-        }
-
-        .node-label {
-          fill: var(--straton-text);
-          font-size: 10px;
-          paint-order: stroke;
-          stroke: rgba(0, 0, 0, 0.55);
-          stroke-width: 3px;
-        }
-
-        .now-line {
-          stroke: var(--straton-primary);
-          stroke-width: 2;
-          stroke-dasharray: 6 6;
-        }
-
-        .now-label {
-          fill: var(--straton-primary);
-          font-size: 11px;
-          font-weight: 750;
-        }
-
-        aside {
-          display: grid;
-          gap: 16px;
-        }
-
-        .side-section {
-          padding: 16px;
-        }
-
-        h2 {
-          margin: 0 0 12px;
-          font-size: 15px;
-          letter-spacing: 0;
-        }
-
-        .spot-list,
-        .node-list {
-          display: grid;
-          gap: 8px;
-        }
-
-        .row {
-          min-width: 0;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          min-height: 42px;
-          padding: 9px 10px;
-          border-radius: 8px;
-          background: var(--straton-panel);
-        }
-
-        .row-main {
-          min-width: 0;
-        }
-
-        .row-title {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          font-size: 13px;
-          font-weight: 650;
-        }
-
-        .row-sub {
-          margin-top: 2px;
-          color: var(--straton-muted);
-          font-size: 12px;
-        }
-
-        .chip {
-          flex: 0 0 auto;
-          border-radius: 999px;
-          padding: 4px 8px;
-          font-size: 11px;
-          font-weight: 750;
-          background: rgba(255, 255, 255, 0.08);
-          color: var(--straton-text);
-        }
-
-        .chip.ok {
-          background: rgba(76, 175, 80, 0.18);
-          color: #a9e9ad;
-        }
-
-        .chip.off {
-          background: rgba(244, 67, 54, 0.15);
-          color: #ffb1a9;
-        }
-
-        .swatch {
-          width: 14px;
-          height: 14px;
-          border-radius: 50%;
-          background: var(--color);
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          flex: 0 0 auto;
-        }
-
-        .spectrum {
-          display: grid;
-          gap: 8px;
-          margin-top: 12px;
-        }
-
-        .bar {
-          display: grid;
-          grid-template-columns: 36px 1fr 34px;
-          align-items: center;
-          gap: 8px;
-          color: var(--straton-muted);
-          font-size: 12px;
-        }
-
-        .track {
-          height: 8px;
-          border-radius: 999px;
-          background: rgba(255, 255, 255, 0.08);
-          overflow: hidden;
-        }
-
-        .fill {
-          height: 100%;
-          width: var(--value);
-          border-radius: inherit;
-          background: var(--color);
-        }
-
-        .error,
-        .empty {
-          background: var(--straton-card);
-          border: 1px solid var(--straton-border);
-          border-radius: 8px;
-          padding: 18px;
-          color: var(--straton-muted);
-        }
-
-        .error {
-          color: var(--error-color, #ff8a80);
-        }
-
-        @media (max-width: 860px) {
-          .page {
-            width: min(100vw - 16px, 760px);
-            padding-top: 62px;
-          }
-
-          header {
-            display: grid;
-            align-items: start;
-          }
-
-          .actions {
-            justify-content: stretch;
-          }
-
-          select,
-          button {
-            width: 100%;
-          }
-
-          .layout {
-            grid-template-columns: 1fr;
-          }
-
-          .stats {
-            grid-template-columns: 1fr;
-          }
-
-          .stat {
-            border-right: 0;
-            border-bottom: 1px solid var(--straton-border);
-          }
-
-          .stat:last-child {
-            border-bottom: 0;
-          }
-        }
-      </style>
-      <button class="menu-button" data-action="menu" aria-label="Menue oeffnen">
-        <span class="menu-icon" aria-hidden="true"></span>
+      <style>${this._css()}</style>
+      <button class="menu" data-action="menu" aria-label="Menu">
+        <span class="menu-icon"></span>
       </button>
-      <div class="page">
-        <header>
-          <div>
-            <div class="kicker">ATI Straton Flex</div>
-            <h1>Lichtprogramm</h1>
-            <div class="meta">${this._headerMeta(program)}</div>
-          </div>
-          <div class="actions">
-            ${this._programSelect()}
-            <button class="primary" data-action="reload" ${this._loading ? "disabled" : ""}>
-              Aktualisieren
-            </button>
-          </div>
-        </header>
-        ${this._error ? `<div class="error">${this._escape(this._error)}</div>` : ""}
-        ${this._loading ? `<div class="empty">Programm wird geladen...</div>` : ""}
-        ${!this._loading && !this._error && this._programs.length === 0 ? this._emptyView() : ""}
-        ${!this._loading && !this._error && program && timeline ? this._programView(program, timeline) : ""}
+      <div class="wrap">
+        ${this._header(program)}
+        ${
+          this._error
+            ? `<div class="notice error">${this._esc(this._error)}</div>`
+            : ""
+        }
+        ${
+          !this._loaded && this._loading
+            ? `<div class="notice">Programm wird geladen…</div>`
+            : ""
+        }
+        ${
+          this._loaded && !this._programs.length
+            ? `<div class="notice">Keine ATI Straton Integration geladen.</div>`
+            : ""
+        }
+        ${program ? this._nav() : ""}
+        ${
+          program && this._view === "overview"
+            ? this._overview(program)
+            : ""
+        }
+        ${
+          program && this._view === "program"
+            ? this._programView(program)
+            : ""
+        }
       </div>
     `;
     this._updateMenuButton();
   }
 
-  _programView(program, timeline) {
-    const nodes = this._nodes(timeline);
-    const activeColor = this._activeColor(nodes);
+  _header(program) {
+    const device = (program && program.device) || {};
+    const refresh = program && program.last_successful_refresh
+      ? new Date(program.last_successful_refresh).toLocaleTimeString()
+      : "–";
+    const cur = (program && program.current) || {};
+    const status = cur.warning || cur.danger ? "warn" : "ok";
     return `
-      <div class="layout">
-        <section class="surface">
-          <div class="chart-head">
-            <div class="chart-title">
-              <strong>${this._escape(timeline.name || "Gruppe")}</strong>
-              <span>${timeline.spots?.length || 0} Spots · ${nodes.length} Punkte · ${this._escape(timeline.next_change || "-")} naechster Wechsel</span>
-            </div>
-            <span class="chip ${timeline.active ? "ok" : "off"}">${timeline.active ? "Aktiv" : "Inaktiv"}</span>
+      <header>
+        <div class="id">
+          <span class="glyph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </span>
+          <div class="names">
+            <strong>${this._esc((program && program.title) || "ATI Straton")}</strong>
+            <span>${this._esc(device.type || "Straton Flex")} · ${this._esc(device.software || "–")} · Stand ${this._esc(refresh)}</span>
           </div>
-          <div class="stats">
-            <div class="stat">
-              <div class="stat-label">Geplante Intensitaet</div>
-              <div class="stat-value">${this._formatNumber(timeline.current_intensity)}%</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Leistung</div>
-              <div class="stat-value">${program.current?.estimated_power ?? "-"} W</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Status</div>
-              <div class="stat-value">${program.current?.warning || program.current?.danger ? "Warnung" : "OK"}</div>
-            </div>
-          </div>
-          <div class="chart-wrap">${this._chart(timeline)}</div>
-          ${this._timelineChecks(program)}
-        </section>
-        <aside>
-          <section class="surface side-section">
-            <h2>Spots</h2>
-            <div class="spot-list">${this._spotRows(timeline)}</div>
-          </section>
-          <section class="surface side-section">
-            <h2>Punkte</h2>
-            <div class="node-list">${this._nodeRows(nodes)}</div>
-          </section>
-          <section class="surface side-section">
-            <h2>Aktuelles Spektrum</h2>
-            ${activeColor ? this._spectrum(activeColor) : `<div class="empty">Kein Spektrum aktiv.</div>`}
-          </section>
-        </aside>
-      </div>
+        </div>
+        <div class="head-right">
+          <span class="chip ${status}">${status === "ok" ? "OK" : "Warnung"}</span>
+          <button class="btn" data-action="reload" ${this._loading ? "disabled" : ""}>Aktualisieren</button>
+        </div>
+      </header>
     `;
   }
 
-  _chart(timeline) {
-    const nodes = this._nodes(timeline);
-    const width = 920;
-    const height = 390;
-    const pad = { left: 48, top: 22, right: 18, bottom: 42 };
-    const innerWidth = width - pad.left - pad.right;
-    const innerHeight = height - pad.top - pad.bottom;
-    const lineColor = timeline.linecolor || "#03a9f4";
-    const points = nodes.map((node) => ({
-      x: pad.left + (this._nodeSeconds(node) / 86400) * innerWidth,
-      y: pad.top + (1 - this._nodeValue(node) / 100) * innerHeight,
-      node,
-    }));
-    const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
-    const area = points.length
-      ? `${path} L ${points[points.length - 1].x.toFixed(1)} ${pad.top + innerHeight} L ${points[0].x.toFixed(1)} ${pad.top + innerHeight} Z`
-      : "";
-    const nowX = pad.left + (this._secondsNow() / 86400) * innerWidth;
-    const yTicks = [0, 25, 50, 75, 100];
-    const xTicks = [0, 6, 12, 18, 24];
+  _nav() {
+    const tab = (view, label) =>
+      `<button class="navbtn ${this._view === view ? "active" : ""}" data-action="view" data-view="${view}">${label}</button>`;
+    const selector =
+      this._programs.length > 1
+        ? `<select name="program" aria-label="Leuchte">${this._programs
+            .map(
+              (p) =>
+                `<option value="${this._esc(p.entry_id)}" ${p.entry_id === this._entryId ? "selected" : ""}>${this._esc(p.title)}</option>`
+            )
+            .join("")}</select>`
+        : "";
+    return `<div class="nav">${tab("overview", "Übersicht")}${tab("program", "Programm")}${selector}</div>`;
+  }
+
+  // ----- overview -----
+
+  _overview(program) {
+    const cur = program.current || {};
+    const par = program.par || [];
+    const pills = [
+      `<span class="pill">Leistung <b>${cur.estimated_power ?? "–"}</b> W</span>`,
+      ...par.map(
+        (p) => `<span class="pill">PAR ${this._esc(p.label)} <b>${p.value ?? "–"}</b></span>`
+      ),
+    ].join("");
+
+    const groups = program.timelines
+      .map((t) => {
+        const on = t.active !== false;
+        const intensity = this._fmt(t.current_intensity);
+        return `
+          <div class="row">
+            <span class="swatch" style="background:${this._esc(t.linecolor || "var(--acc)")}"></span>
+            <div class="row-main">
+              <div class="row-top"><span class="row-name">${this._esc(t.name || t.id)}</span>
+                <span class="row-val ${on ? "" : "off"}">${on ? intensity + " %" : "Aus"}</span></div>
+              <div class="bar"><span class="fill" style="width:${on ? Math.max(0, Math.min(100, Number(t.current_intensity) || 0)) : 0}%"></span></div>
+              <div class="row-sub">${(t.spots || []).length} Spots · nächster Wechsel ${this._esc(this._hhmm(t.next_change))}</div>
+            </div>
+          </div>`;
+      })
+      .join("");
+
+    const spots = (program.spots || [])
+      .filter((s) => s.enabled !== false)
+      .map((s) => {
+        const section = this._section(s.external_id);
+        const temp = s.temperature != null ? `${this._fmt(s.temperature)} °C` : "–";
+        return `
+          <div class="row compact">
+            <div class="row-main">
+              <div class="row-name">${this._esc(section ? section : s.name || s.external_id)}</div>
+              <div class="row-sub">${this._esc(s.external_id || "")}</div>
+            </div>
+            <span class="chip ${s.online ? "ok" : "off"}">${s.online ? "Online" : "Offline"}</span>
+            <span class="temp">${temp}</span>
+          </div>`;
+      })
+      .join("");
 
     return `
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Straton Lichtkurve">
-        ${yTicks
-          .map((tick) => {
-            const y = pad.top + (1 - tick / 100) * innerHeight;
-            return `
-              <line class="grid-line" x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}"></line>
-              <text class="axis-label" x="10" y="${y + 4}">${tick}%</text>
-            `;
-          })
-          .join("")}
-        ${xTicks
-          .map((tick) => {
-            const x = pad.left + (tick / 24) * innerWidth;
-            return `
-              <line class="grid-line" x1="${x}" y1="${pad.top}" x2="${x}" y2="${pad.top + innerHeight}"></line>
-              <text class="axis-label" x="${x - 12}" y="${height - 15}">${String(tick).padStart(2, "0")}:00</text>
-            `;
-          })
-          .join("")}
-        ${area ? `<path class="area" style="--line-color:${this._escape(lineColor)}" d="${area}"></path>` : ""}
-        ${path ? `<path class="curve" style="--line-color:${this._escape(lineColor)}" d="${path}"></path>` : ""}
-        <line class="now-line" x1="${nowX}" y1="${pad.top}" x2="${nowX}" y2="${pad.top + innerHeight}"></line>
-        <text class="now-label" x="${Math.min(nowX + 6, width - 68)}" y="${pad.top + 14}">Jetzt</text>
-        ${points
-          .map((point) => {
-            const color = point.node.color?.bgColor || lineColor;
-            const labelY = point.y < 42 ? point.y + 22 : point.y - 12;
-            return `
-              <circle class="node" style="--color:${this._escape(color)}" cx="${point.x}" cy="${point.y}" r="7"></circle>
-              <text class="node-label" x="${point.x + 9}" y="${labelY}">
-                ${this._escape(point.node.time_label || "")} · ${this._formatNumber(point.node.value)}%
-              </text>
-            `;
-          })
-          .join("")}
+      <section class="card pad">
+        <div class="live">${pills}</div>
+      </section>
+      <section class="card">
+        <p class="label">Gruppen</p>
+        <div class="list">${groups || `<div class="row"><div class="row-main">Keine Gruppen</div></div>`}</div>
+      </section>
+      <section class="card">
+        <p class="label">Spots</p>
+        <div class="list">${spots || `<div class="row"><div class="row-main">Keine Spots</div></div>`}</div>
+      </section>
+    `;
+  }
+
+  // ----- program (curve) -----
+
+  _programView(program) {
+    const timeline = this._selectedTimeline() || program.timelines[0];
+    if (!timeline) return `<div class="notice">Kein Programm.</div>`;
+    const tabs = program.timelines
+      .map(
+        (t) =>
+          `<button class="tab ${String(t.id) === String(timeline.id) ? "active" : ""}" data-action="tab" data-id="${this._esc(String(t.id))}">${this._esc(t.name || t.id)}</button>`
+      )
+      .join("");
+    const nodes = (timeline.nodes || [])
+      .slice()
+      .sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0));
+    const active = this._activeColor(nodes);
+
+    return `
+      <div class="tabs">${tabs}</div>
+      <section class="card">
+        <div class="curve-head">
+          <div><strong>${this._esc(timeline.name || "Gruppe")}</strong>
+            <span class="muted">${nodes.length} Punkte · ${this._fmt(timeline.current_intensity)} % jetzt</span></div>
+          <span class="chip ${timeline.active !== false ? "ok" : "off"}">${timeline.active !== false ? "Aktiv" : "Inaktiv"}</span>
+        </div>
+        <div class="curve">${this._curve(timeline, nodes)}</div>
+      </section>
+      <section class="card">
+        <p class="label">Stützstellen</p>
+        <div class="list">${this._nodeList(nodes)}</div>
+      </section>
+      <section class="card pad">
+        <p class="label" style="margin-top:0">Aktuelles Spektrum</p>
+        ${active ? this._spectrum(active) : `<div class="muted">Kein Spektrum aktiv.</div>`}
+      </section>
+    `;
+  }
+
+  _curve(timeline, nodes) {
+    const W = 920,
+      H = 320,
+      pl = 44,
+      pt = 18,
+      pr = 16,
+      pb = 30;
+    const iw = W - pl - pr,
+      ih = H - pt - pb;
+    const line = timeline.linecolor || "var(--acc)";
+    const X = (sec) => pl + (Math.max(0, Math.min(86400, Number(sec) || 0)) / 86400) * iw;
+    const Y = (v) => pt + (1 - Math.max(0, Math.min(100, Number(v) || 0)) / 100) * ih;
+    const pts = nodes.map((n) => ({ x: X(n.time), y: Y(n.value), n }));
+    const path = pts
+      .map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+      .join(" ");
+    const area = pts.length
+      ? `${path} L ${pts[pts.length - 1].x.toFixed(1)} ${pt + ih} L ${pts[0].x.toFixed(1)} ${pt + ih} Z`
+      : "";
+    const nowSec = this._nowSeconds();
+    const nowX = X(nowSec);
+
+    const grid = [0, 25, 50, 75, 100]
+      .map((t) => {
+        const y = Y(t);
+        return `<line class="grid" x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}"/><text class="axis" x="8" y="${y + 4}">${t}</text>`;
+      })
+      .join("");
+    const xaxis = [0, 6, 12, 18, 24]
+      .map((h) => {
+        const x = pl + (h / 24) * iw;
+        return `<text class="axis" text-anchor="middle" x="${x}" y="${H - 10}">${String(h).padStart(2, "0")}:00</text>`;
+      })
+      .join("");
+    const dots = pts
+      .map((p) => {
+        const c = (p.n.color && p.n.color.bgColor) || line;
+        return `<circle class="node" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5.5" fill="${this._esc(c)}"/>`;
+      })
+      .join("");
+
+    return `
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Tageskurve">
+        ${grid}${xaxis}
+        ${area ? `<path class="area" style="fill:${this._esc(line)}" d="${area}"/>` : ""}
+        ${path ? `<path class="cline" style="stroke:${this._esc(line)}" d="${path}"/>` : ""}
+        <line class="now" x1="${nowX}" y1="${pt}" x2="${nowX}" y2="${pt + ih}"/>
+        <text class="now-t" text-anchor="middle" x="${Math.max(pl + 12, Math.min(W - pr - 12, nowX))}" y="${pt - 4}">jetzt</text>
+        ${dots}
       </svg>
     `;
   }
 
-  _spotRows(timeline) {
-    const spots = timeline.spots || [];
-    if (!spots.length) {
-      return `<div class="row"><div class="row-main"><div class="row-title">Keine Spots</div></div></div>`;
-    }
-    return spots
-      .map(
-        (spot) => `
-          <div class="row">
-            <div class="row-main">
-              <div class="row-title">${this._escape(this._spotLabel(spot))}</div>
-              <div class="row-sub">${this._escape(this._spotDetails(spot))}</div>
-            </div>
-            <span class="chip ${spot.online ? "ok" : "off"}">${spot.online ? "Online" : "Offline"}</span>
-          </div>
-        `
-      )
-      .join("");
-  }
-
-  _nodeRows(nodes) {
-    if (!nodes.length) {
-      return `<div class="row"><div class="row-main"><div class="row-title">Keine Punkte</div></div></div>`;
-    }
+  _nodeList(nodes) {
+    if (!nodes.length) return `<div class="row"><div class="row-main">Keine Punkte</div></div>`;
     return nodes
-      .map((node) => {
-        const color = node.color?.bgColor || "#03a9f4";
+      .map((n) => {
+        const c = (n.color && n.color.bgColor) || "var(--acc)";
+        const name = (n.color && n.color.name) || "–";
         return `
-          <div class="row">
-            <span class="swatch" style="--color:${this._escape(color)}"></span>
+          <div class="row compact">
+            <span class="dot" style="background:${this._esc(c)}"></span>
             <div class="row-main">
-              <div class="row-title">${this._escape(node.time_label || "-")} · ${this._formatNumber(node.value)}%</div>
-              <div class="row-sub">${this._escape(node.color?.name || "Kein Spektrum")}</div>
+              <div class="row-name">${this._esc(n.time_label || "–")} · ${this._fmt(n.value)} %</div>
+              <div class="row-sub">${this._esc(name)}</div>
             </div>
-            <span class="chip">${this._escape(node.type || "node")}</span>
-          </div>
-        `;
+          </div>`;
       })
       .join("");
   }
 
   _spectrum(color) {
-    const values = (color.values || []).slice().sort((a, b) => (a.sort || 0) - (b.sort || 0));
-    if (!values.length) {
-      return `<div class="empty">Keine Kanalwerte.</div>`;
-    }
-    return `
-      <div class="row">
-        <span class="swatch" style="--color:${this._escape(color.bgColor || "#03a9f4")}"></span>
-        <div class="row-main">
-          <div class="row-title">${this._escape(color.name || "Spektrum")}</div>
-          <div class="row-sub">Kanalwerte 0-255</div>
-        </div>
-      </div>
-      <div class="spectrum">
-        ${values
-          .map((value) => {
-            const percent = Math.max(0, Math.min(100, (Number(value.value) / 255) * 100));
-            return `
-              <div class="bar">
-                <span>${this._escape(value.name)}</span>
-                <span class="track"><span class="fill" style="--value:${percent}%; --color:${this._channelColor(value.name)}"></span></span>
-                <span>${value.value ?? "-"}</span>
-              </div>
-            `;
-          })
-          .join("")}
-      </div>
-    `;
-  }
-
-  _programSelect() {
-    if (this._programs.length <= 1) {
-      return "";
-    }
-    return `
-      <select name="program" aria-label="Straton auswaehlen">
-        ${this._programs
-          .map(
-            (program) => `
-              <option value="${this._escape(program.entry_id)}" ${program.entry_id === this._entryId ? "selected" : ""}>
-                ${this._escape(program.title)}
-              </option>
-            `
-          )
-          .join("")}
-      </select>
-    `;
-  }
-
-  _timelineChecks(program) {
-    const timelines = program?.timelines || [];
-    if (timelines.length <= 1) {
-      return "";
-    }
-    return `
-      <div class="group-selector" aria-label="Gruppe auswaehlen">
-        ${timelines
-          .map(
-            (timeline) => {
-              const timelineId = String(timeline.id);
-              const selected = timelineId === this._timelineId;
-              const nodeCount = this._nodes(timeline).length;
-              const check = selected ? "✓" : "";
-              return `
-                <label class="group-check ${selected ? "active" : ""}">
-                  <input
-                    type="checkbox"
-                    name="timeline"
-                    value="${this._escape(timelineId)}"
-                    ${selected ? "checked" : ""}
-                  >
-                  <span class="check-box" aria-hidden="true">${check}</span>
-                  <span class="group-copy">
-                    <strong>${this._escape(timeline.name || timeline.id)}</strong>
-                    <small>${timeline.spots?.length || 0} Spots · ${nodeCount} Punkte</small>
-                  </span>
-                </label>
-              `;
-            }
-          )
-          .join("")}
-      </div>
-    `;
-  }
-
-  _emptyView() {
-    return `<div class="empty">Keine ATI Straton Integration gefunden oder noch keine Programmdaten geladen.</div>`;
-  }
-
-  _headerMeta(program) {
-    if (!program) {
-      return "Read-only Ansicht der Tageskurve";
-    }
-    const device = program.device || {};
-    const refresh = program.last_successful_refresh
-      ? new Date(program.last_successful_refresh).toLocaleString()
-      : "-";
-    return `${this._escape(device.type || "Straton Flex")} · ${this._escape(device.software || "-")} · letzte Aktualisierung ${this._escape(refresh)}`;
-  }
-
-  _nodes(timeline) {
-    return (timeline.nodes || [])
+    const values = (color.values || [])
       .slice()
-      .sort((a, b) => this._nodeSeconds(a) - this._nodeSeconds(b));
+      .sort((a, b) => (a.sort || 0) - (b.sort || 0));
+    if (!values.length) return `<div class="muted">Keine Kanalwerte.</div>`;
+    const bars = values
+      .map((v) => {
+        const pct = Math.max(0, Math.min(100, (Number(v.value) || 0) / 2.55));
+        const col = CHANNEL_COLORS[v.name] || "var(--acc)";
+        return `
+          <div class="chan">
+            <span class="cn">${this._esc(channelLabel(v.name))}</span>
+            <span class="track"><span class="cfill" style="width:${pct}%;background:${col}"></span></span>
+            <span class="cv">${v.value ?? "–"}</span>
+          </div>`;
+      })
+      .join("");
+    return `
+      <div class="row compact">
+        <span class="dot" style="background:${this._esc(color.bgColor || "var(--acc)")}"></span>
+        <div class="row-main"><div class="row-name">${this._esc(color.name || "Spektrum")}</div>
+          <div class="row-sub">Kanalwerte 0–255</div></div>
+      </div>
+      <div class="spectrum">${bars}</div>
+    `;
   }
+
+  // ---------- helpers ----------
 
   _activeColor(nodes) {
-    const now = this._secondsNow();
+    const now = this._nowSeconds();
     let active = nodes[0];
-    for (const node of nodes) {
-      if (this._nodeSeconds(node) <= now) {
-        active = node;
-      }
+    for (const n of nodes) {
+      if ((Number(n.time) || 0) <= now) active = n;
     }
-    return active?.color;
+    return active && active.color;
   }
 
-  _nodeSeconds(node) {
-    const value = Number(node?.time);
-    if (!Number.isFinite(value)) {
-      return 0;
-    }
-    return Math.max(0, Math.min(86400, value));
+  _nowSeconds() {
+    const d = new Date();
+    return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
   }
 
-  _nodeValue(node) {
-    const value = Number(node?.value);
-    if (!Number.isFinite(value)) {
-      return 0;
-    }
-    return Math.max(0, Math.min(100, value));
+  _section(externalId) {
+    const s = String(externalId || "");
+    if (!s.includes(":")) return null;
+    return { 0: "Links", 1: "Mitte", 2: "rechts" }[s.split(":")[1]] || null;
   }
 
-  _secondsNow() {
-    const now = new Date();
-    return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  _fmt(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "–";
+    return Number.isInteger(n) ? String(n) : n.toFixed(1);
   }
 
-  _spotLabel(spot) {
-    const externalId = String(spot.external_id || "");
-    const [deviceId, spotIndex] = externalId.split(":");
-    const customName = this._cleanSpotText(spot.custom_name);
-    const deviceName = customName || (deviceId ? `Straton ${deviceId}` : "");
-    const indexNumber = Number(spotIndex);
-    const spotNumber = Number.isFinite(indexNumber) ? indexNumber + 1 : spotIndex;
-
-    if (deviceName && spotNumber !== undefined && spotNumber !== "") {
-      return `${deviceName} · Spot ${spotNumber}`;
-    }
-    return deviceName || this._cleanSpotText(spot.name) || externalId || "Spot";
-  }
-
-  _spotDetails(spot) {
-    const parts = [];
-    const apiName = this._cleanSpotText(spot.name);
-    if (apiName) {
-      parts.push(`API: ${apiName}`);
-    }
-    if (spot.external_id) {
-      parts.push(spot.external_id);
-    }
-    parts.push(`${spot.temperature ?? "-"} °C`);
-    return parts.join(" · ");
-  }
-
-  _cleanSpotText(value) {
-    return String(value || "").replaceAll("_", " ").trim();
-  }
-
-  _formatNumber(value) {
-    const number = Number(value);
-    if (!Number.isFinite(number)) {
-      return "-";
-    }
-    return Number.isInteger(number) ? String(number) : number.toFixed(1);
-  }
-
-  _channelColor(name) {
-    const colors = {
-      UV: "#7e57c2",
-      V: "#8e24aa",
-      RB: "#304ffe",
-      B: "#2196f3",
-      LC: "#00bcd4",
-      W: "#f7f7f2",
-      R: "#f44336",
-    };
-    return colors[name] || "#03a9f4";
+  _hhmm(iso) {
+    if (!iso) return "–";
+    const parts = String(iso).split(":");
+    if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
+    return String(iso);
   }
 
   _updateMenuButton() {
-    const menuButton = this.shadowRoot.querySelector(".menu-button");
-    if (menuButton) {
-      menuButton.style.display = this._narrow ? "grid" : "none";
-    }
+    const btn = this.shadowRoot.querySelector(".menu");
+    if (btn) btn.style.display = this._narrow ? "grid" : "none";
   }
 
-  _escape(value) {
+  _esc(value) {
     return String(value ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  _css() {
+    return `
+      :host {
+        --bg: var(--primary-background-color, #eef3f7);
+        --card: var(--ha-card-background, var(--card-background-color, #ffffff));
+        --border: var(--divider-color, rgba(127,127,127,.22));
+        --text: var(--primary-text-color, #0c1c28);
+        --muted: var(--secondary-text-color, #5a7183);
+        --acc: var(--primary-color, #0e9fb5);
+        /* Secondary tones derived from the HA theme so they follow light/dark
+           automatically (never fight prefers-color-scheme). */
+        --card2: color-mix(in srgb, var(--text) 6%, var(--card));
+        --acc-soft: color-mix(in srgb, var(--acc) 14%, transparent);
+        --good: var(--success-color, #2e9e4f);
+        --warn: var(--warning-color, #c9761a);
+        display: block; min-height: 100vh; background: var(--bg); color: var(--text);
+        font-family: var(--paper-font-body1_-_font-family, system-ui, sans-serif);
+      }
+      * { box-sizing: border-box; }
+      .wrap { width: min(1080px, calc(100vw - 24px)); margin: 0 auto; padding: 20px 0 48px;
+        display: flex; flex-direction: column; gap: 14px; }
+      .menu { position: fixed; top: 8px; left: 8px; z-index: 3; width: 44px; height: 44px; display: none;
+        place-items: center; border: 0; background: transparent; color: var(--text); cursor: pointer; }
+      .menu-icon, .menu-icon::before, .menu-icon::after { display: block; width: 20px; height: 2px;
+        border-radius: 9px; background: currentColor; position: relative; }
+      .menu-icon::before, .menu-icon::after { content: ""; position: absolute; left: 0; }
+      .menu-icon::before { top: -6px; } .menu-icon::after { top: 6px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+      .id { display: flex; align-items: center; gap: 12px; min-width: 0; }
+      .glyph { width: 40px; height: 40px; border-radius: 11px; flex: 0 0 auto; display: grid; place-items: center;
+        background: linear-gradient(150deg, var(--acc), #2f5bff); color: #fff; }
+      .glyph svg { width: 22px; height: 22px; }
+      .names strong { display: block; font-size: 17px; }
+      .names span { display: block; font-size: 12.5px; color: var(--muted); }
+      .head-right { display: flex; align-items: center; gap: 10px; }
+      .btn { min-height: 38px; border: 1px solid var(--border); border-radius: 9px; background: var(--card);
+        color: var(--text); font: inherit; font-size: 13.5px; padding: 0 14px; cursor: pointer; }
+      .btn[disabled] { opacity: .5; cursor: default; }
+      .nav { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .navbtn { border: 1px solid var(--border); background: var(--card); color: var(--muted); font: inherit;
+        font-weight: 650; font-size: 14px; padding: 9px 18px; border-radius: 999px; cursor: pointer; }
+      .navbtn.active { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 50%, transparent); color: var(--acc); }
+      select { margin-left: auto; min-height: 38px; border: 1px solid var(--border); border-radius: 9px;
+        background: var(--card); color: var(--text); font: inherit; padding: 0 10px; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+      .card.pad { padding: 16px; }
+      .label { font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+        color: var(--muted); margin: 14px 16px 8px; }
+      .live { display: flex; gap: 8px; flex-wrap: wrap; }
+      .pill { font-size: 13px; background: var(--card2); border: 1px solid var(--border); padding: 7px 11px;
+        border-radius: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .pill b { color: var(--text); }
+      .list { display: flex; flex-direction: column; }
+      .row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+      .row + .row { border-top: 1px solid var(--border); }
+      .row.compact { padding: 10px 16px; }
+      .row-main { flex: 1 1 auto; min-width: 0; }
+      .row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .row-name { font-size: 14px; font-weight: 650; }
+      .row-val { font-family: ui-monospace, monospace; font-weight: 650; }
+      .row-val.off { color: var(--muted); }
+      .row-sub { margin-top: 3px; font-size: 12px; color: var(--muted); }
+      .bar { margin-top: 8px; height: 7px; border-radius: 99px; background: var(--card2); border: 1px solid var(--border); overflow: hidden; }
+      .fill { height: 100%; background: var(--acc); }
+      .swatch { width: 34px; height: 34px; border-radius: 9px; flex: 0 0 auto; border: 1px solid var(--border); }
+      .dot { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 auto; border: 1px solid var(--border); }
+      .temp { font-family: ui-monospace, monospace; font-size: 13px; }
+      .chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+        background: var(--card2); color: var(--muted); }
+      .chip.ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+      .chip.off, .chip.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+      .tabs { display: flex; gap: 6px; overflow-x: auto; }
+      .tab { white-space: nowrap; border: 1px solid var(--border); background: var(--card); color: var(--muted);
+        font: inherit; font-weight: 650; font-size: 13px; padding: 8px 15px; border-radius: 999px; cursor: pointer; }
+      .tab.active { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 50%, transparent); color: var(--acc); }
+      .curve-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+      .curve-head strong { font-size: 16px; } .muted { color: var(--muted); font-size: 12.5px; }
+      .curve { padding: 10px 8px; }
+      svg { display: block; width: 100%; height: auto; }
+      .grid { stroke: var(--border); stroke-width: 1; }
+      .axis { fill: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+      .cline { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+      .area { opacity: .1; }
+      .node { stroke: var(--card); stroke-width: 2.5; }
+      .now { stroke: var(--acc); stroke-width: 1.5; stroke-dasharray: 5 5; }
+      .now-t { fill: var(--acc); font-size: 11px; font-weight: 700; }
+      .spectrum { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+      .chan { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+      .cn { font-family: ui-monospace, monospace; font-weight: 700; }
+      .cv { text-align: right; font-family: ui-monospace, monospace; }
+      .track { height: 8px; border-radius: 99px; background: var(--card2); border: 1px solid var(--border); overflow: hidden; }
+      .cfill { display: block; height: 100%; }
+      .notice { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; color: var(--muted); }
+      .notice.error { color: var(--error-color, #d64545); }
+    `;
   }
 }
 
