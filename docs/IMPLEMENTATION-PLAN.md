@@ -29,7 +29,8 @@ Abgeleitet aus `HANDOVER-2026-07-19-app-session.md` (Punkte A–F) + Abgleich mi
 - **Phase 4 — Koexistenz & Live:** Single-Session-Pausier-Schalter; `python-socketio`-Client (`temperature-spots`/`changed-intensity`) statt/zusätzlich 30 s-Poll; Spot-Identität dann auf `externalId` re-keyen; ermöglicht transientes Live-Dimmen (`update-node`) für Override/Mondlicht.
 - **Panel-Cockpit-Redesign (F):**
   - **R1 — Read-only-Cockpit** ✅ **v0.5.0**: neue `frontend/panel.js` (Übersicht + Programm-Kurve) live an `program/list`, HA-theme-aware (Nebentöne via `color-mix` aus HA-Vars). Payload um `par` erweitert, Watt in `panel.py` auf `adc/5.5` gefixt, `PANEL_VERSION`-Bump (cache-bust). Kein Write.
-  - **R2 — Editor mit Schreiben** *(offen)*: Punkte ziehen/bearbeiten → neuer WS-Befehl `ati_straton/program/save` → `coordinator.async_apply_timelines()` (hinter `write_enabled`, Debounce), zuerst rechts/0 %. = die eigentliche Phase-3-Steuerung, im Panel statt als `light`-Entity.
+  - **R1.1 — Sektionen-Kacheln + Editor-Auswahl** ✅ **v0.6.0**: Übersicht-Spots als **Kacheln pro Lampe** (Master/Slave, Links/Mitte/rechts-Temp; Payload um `lamps` erweitert). Programm: Stützstellen-Liste raus → **Punkt anklicken → Punkt-Editor unten** (Zeit/%-Stepper, +Punkt, Löschen), Auswahl hervorgehoben. Bearbeitung **rein lokal** (Arbeitskopie, Live-Redraw, Speicher-Leiste); **„Speichern" gesperrt** (= R2). Fix: Auto-Refresh verwirft Auswahl/Edits nicht mehr.
+  - **R2 — Editor mit Schreiben** *(offen)*: `Speichern` wiren → neuer WS-Befehl `ati_straton/program/save` → `coordinator.async_apply_timelines()` (hinter `write_enabled`, Debounce), zuerst rechts/0 %, **live mit Rene**. Dazu offen: Gesamtintensitäts-Slider (lokal→save), Palette-Wechsel je Punkt, Kurven-Templates (Vorlagen/Wolken/Ränder/Zeit), Play/Vorschau, Punkt-Drag.
 - **Phase 5 — Komfort:** mDNS-Discovery (A); `number`/`select`/`button` bzw. Panel-Aktionen (Kanäle, Profile via `/api/presettings`).
 
 ## Guardrails

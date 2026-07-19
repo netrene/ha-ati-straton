@@ -15,6 +15,7 @@ from .const import DOMAIN, PANEL_URL
 from .coordinator import (
     ATIStratonCoordinator,
     current_timeline_value,
+    first_present,
     next_timeline_change,
 )
 
@@ -22,7 +23,7 @@ PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
 # Bump on every panel.js change to bust the browser cache and re-register.
-PANEL_VERSION = "0.5.0"
+PANEL_VERSION = "0.6.0"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 
@@ -117,6 +118,7 @@ def _program_payload(entry_id: str, coordinator: ATIStratonCoordinator) -> dict[
             "danger": data.current.get("isDanger"),
         },
         "par": _par_payload(data),
+        "lamps": _lamps_payload(data),
         "spots": [_spot_payload(spot) for spot in data.spots],
         "colors": [_color_payload(color) for color in data.colors],
         "timelines": [_timeline_payload(timeline) for timeline in data.timelines],
@@ -217,6 +219,40 @@ def _timezone_name(timeinfo: dict[str, Any]) -> str | None:
         value = timezone.get("name")
         return str(value) if value not in (None, "") else None
     return None
+
+
+def _lamps_payload(data: Any) -> list[dict[str, Any]]:
+    """Return the lamp topology (master first, then linked slaves)."""
+    lamps: list[dict[str, Any]] = []
+    master_id = str(data.device_id) if data.device_id else None
+    if master_id:
+        lamps.append(
+            {
+                "serial": master_id,
+                "role": "Master",
+                "type": data.device_type,
+                "sw": data.sw_version,
+                "ip": None,
+            }
+        )
+    for device in data.devices:
+        serial = first_present(device, "externalId")
+        if serial is None:
+            continue
+        sw = None
+        version = first_present(device, "swVersion")
+        if isinstance(version, dict):
+            sw = first_present(version, "number")
+        lamps.append(
+            {
+                "serial": str(serial),
+                "role": "Slave",
+                "type": first_present(device, "deviceType") or data.device_type,
+                "sw": sw,
+                "ip": first_present(device, "ip"),
+            }
+        )
+    return lamps
 
 
 def _par_payload(data: Any) -> list[dict[str, Any]]:
