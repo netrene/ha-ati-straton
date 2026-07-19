@@ -9,6 +9,21 @@ const CHANNEL_COLORS = {
   LC: "#22c1d6", C: "#22c1d6", W: "#c9d4dc", R: "#ff5a5a",
 };
 const SECTIONS = ["Links", "Mitte", "rechts"];
+// Curve templates: normalized [time 0..1, value %]. Adapted from the app mockup.
+const TPL = {
+  plateau: [[0, 0], [0.1, 30], [0.2, 60], [0.82, 60], [0.91, 30], [1, 0]],
+  bolus: [[0, 0], [0.02, 72], [0.19, 72], [0.2, 60], [0.46, 60], [0.54, 50], [0.63, 39], [0.72, 27], [0.81, 12], [1, 0]],
+  glocke: [[0, 0], [0.17, 30], [0.33, 55], [0.5, 70], [0.67, 55], [0.83, 30], [1, 0]],
+  sunrise: [[0, 0], [0.08, 10], [0.15, 25], [0.23, 45], [0.31, 60], [0.69, 60], [0.85, 30], [1, 0]],
+  natur: [[0, 0], [0.16, 25], [0.32, 50], [0.44, 65], [0.52, 68], [0.6, 60], [0.76, 45], [0.92, 20], [1, 0]],
+};
+const TPL_META = [
+  ["plateau", "Plateau", "Anlauf → langes Plateau → Abstieg. SPS, Mixed."],
+  ["bolus", "Bolus", "2-h-Block am Start, langer Auslauf. SPS."],
+  ["glocke", "Glocke", "Gleichmäßig rauf/runter, kurzes Max. LPS, Mixed."],
+  ["sunrise", "Langer Sonnenaufgang", "Sehr langsamer Start, dann Hauptphase. LPS."],
+  ["natur", "Natürlich", "Langsam rauf, breites Mittag, sanft runter."],
+];
 // The lamp calls the cyan channel "LC" internally; the ATI UI shows it as "C".
 const channelLabel = (name) => (name === "LC" ? "C" : name);
 
@@ -30,6 +45,11 @@ class ATIStratonProgramPanel extends HTMLElement {
     this._edit = null; // { tid, nodes: [...clones] }
     this._sel = -1; // selected node index
     this._dirty = false;
+    // template tool state
+    this._tool = "vorlagen";
+    this._tplStart = 9; // hours
+    this._tplDur = 11; // hours
+    this._tplPal = null; // palette name
   }
 
   set hass(hass) {
@@ -132,6 +152,12 @@ class ATIStratonProgramPanel extends HTMLElement {
         this._dirty = true;
         this._render();
       }
+      return;
+    }
+    const tplpal = event.target.closest('select[name="tplpal"]');
+    if (tplpal) {
+      this._tplPal = tplpal.value;
+      this._render();
     }
   }
 
@@ -159,6 +185,12 @@ class ATIStratonProgramPanel extends HTMLElement {
       this._delPoint();
     } else if (a === "discard") {
       this._edit = null; this._sel = -1; this._dirty = false; this._render();
+    } else if (a === "tool") {
+      this._tool = btn.dataset.tool; this._render();
+    } else if (a === "tpl") {
+      this._adjustTpl(btn.dataset.field, Number(btn.dataset.d));
+    } else if (a === "tplapply") {
+      this._applyTpl(btn.dataset.key);
     }
   }
 
@@ -350,6 +382,7 @@ class ATIStratonProgramPanel extends HTMLElement {
         <div class="curve">${this._curve(timeline, nodes)}</div>
         ${this._pointEditor(sel)}
       </section>
+      ${this._tools(program)}
       <section class="card pad">
         <p class="label" style="margin-top:0">Aktuelles Spektrum</p>
         ${active ? this._spectrum(active) : `<div class="muted">Kein Spektrum.</div>`}
@@ -434,6 +467,87 @@ class ATIStratonProgramPanel extends HTMLElement {
           <div class="row-sub">Kanalwerte 0–255</div></div></div>
       <div class="spectrum">${bars}</div>`;
   }
+
+  // ----- tools (templates) -----
+  _tools(program) {
+    const colors = program.colors || [];
+    if (this._tplPal === null) {
+      const own = colors.find((c) => c.disabled === false);
+      this._tplPal = ((own || colors[0] || {}).name) || null;
+    }
+    const ttab = (id, label) => `<button class="ttab ${this._tool === id ? "on" : ""}" data-action="tool" data-tool="${id}">${label}</button>`;
+    const tabs = `<div class="tooltabs">${ttab("vorlagen", "Vorlagen")}${ttab("wolken", "Wolken")}${ttab("raender", "Ränder")}${ttab("zeit", "Zeit")}</div>`;
+    const body = this._tool === "vorlagen"
+      ? this._toolVorlagen(colors)
+      : `<p class="muted" style="padding:8px 2px">${this._esc(this._toolName(this._tool))} — kommt als Nächstes.</p>`;
+    return `<section class="card pad"><p class="label" style="margin:0 0 10px">Werkzeuge</p>${tabs}<div class="toolbody">${body}</div></section>`;
+  }
+  _toolName(t) { return { wolken: "Wolken einbacken", raender: "Ränder weichzeichnen", zeit: "Kurve zeitlich verschieben" }[t] || t; }
+
+  _toolVorlagen(colors) {
+    const dur = Math.min(this._tplDur, 24 - this._tplStart);
+    const step = (field, label, value) => `
+      <div class="stepper-row"><span class="sl">${label}</span>
+        <button class="sbtn" data-action="tpl" data-field="${field}" data-d="-1">−</button>
+        <span class="sval">${value}</span>
+        <button class="sbtn" data-action="tpl" data-field="${field}" data-d="1">+</button></div>`;
+    const options = colors.length
+      ? colors.map((c) => `<option value="${this._esc(c.name)}" ${c.name === this._tplPal ? "selected" : ""}>${this._esc(c.name)}${c.disabled === false ? " · eigen" : ""}</option>`).join("")
+      : `<option>—</option>`;
+    const list = TPL_META.map((m) => `
+      <button class="tpl-row" data-action="tplapply" data-key="${m[0]}">
+        <span class="tpl-mini">${this._miniCurve(TPL[m[0]])}</span>
+        <span class="tpl-txt"><b>${this._esc(m[1])}</b><span>${this._esc(m[2])}</span></span></button>`).join("");
+    return `
+      <p class="muted" style="margin:0 0 12px">Startzeit &amp; Dauer wählen, dann Form antippen — sie wird ins Fenster <b>Start … Start+Dauer</b> gelegt. „Verwerfen" macht rückgängig.</p>
+      <div class="tpl-inputs">${step("start", "Start", this._esc(this._hoursToHHMM(this._tplStart)))}${step("dur", "Dauer", this._esc(this._fmtDur(dur)))}</div>
+      <div class="tpl-pal"><span class="pt-pal-l">Palette</span><select name="tplpal" ${colors.length ? "" : "disabled"}>${options}</select></div>
+      <div class="tpl-list">${list}</div>`;
+  }
+
+  _applyTpl(key) {
+    const program = this._program();
+    const shape = TPL[key];
+    if (!this._edit || !program || !shape) return;
+    const start = this._tplStart;
+    const dur = Math.min(this._tplDur, 24 - start);
+    const colors = program.colors || [];
+    const pal = colors.find((c) => c.name === this._tplPal) ||
+      colors[0] || { id: null, name: this._tplPal, bgColor: "#888888", values: [] };
+    const mk = (h, v) => {
+      const t = Math.max(0, Math.min(86400, Math.round(h * 3600)));
+      return {
+        type: "node", index: 0, time: t, time_label: this._secToHHMM(t),
+        value: Math.max(0, Math.min(100, v)),
+        color: { id: pal.id, name: pal.name, bgColor: pal.bgColor, values: (pal.values || []).slice() },
+      };
+    };
+    const nodes = [];
+    if (start > 0.02) nodes.push(mk(0, 0));
+    shape.forEach((a) => nodes.push(mk(start + a[0] * dur, a[1])));
+    if (start + dur < 23.98) nodes.push(mk(24, 0));
+    nodes[0].type = "first";
+    nodes[nodes.length - 1].type = "last";
+    nodes.forEach((n, i) => (n.index = i));
+    this._edit.nodes = nodes;
+    this._sel = Math.min(1, nodes.length - 1);
+    this._dirty = true;
+    this._render();
+  }
+  _adjustTpl(field, d) {
+    if (field === "start") this._tplStart = Math.max(0, Math.min(22, Math.round((this._tplStart + d * 0.25) * 100) / 100));
+    else this._tplDur = Math.max(3, Math.min(16, this._tplDur + d * 0.5));
+    this._render();
+  }
+  _miniCurve(shape) {
+    const w = 72, h = 34, pl = 2, pr = 2, pt = 3, pb = 3, iw = w - pl - pr, ih = h - pt - pb;
+    let d = "";
+    shape.forEach((a, i) => { const x = pl + a[0] * iw, y = pt + (1 - a[1] / 100) * ih; d += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1) + " "; });
+    const area = `${d}L ${pl + iw} ${pt + ih} L ${pl} ${pt + ih} Z`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><path d="${area}" fill="var(--acc)" opacity=".15"/><path d="${d}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+  _hoursToHHMM(h) { return this._secToHHMM(Math.round(h * 3600)); }
+  _fmtDur(h) { return (h % 1 === 0 ? String(h) : h.toFixed(1)) + " h"; }
 
   _saveBar() {
     return `
@@ -557,7 +671,17 @@ class ATIStratonProgramPanel extends HTMLElement {
       .pt-actions { display: flex; gap: 8px; }
       .pt-pal { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
       .pt-pal-l { min-width: 46px; }
-      .pt-pal select { margin-left: 0; flex: 1 1 auto; min-width: 160px; }
+      .pt-pal select, .tpl-pal select { margin-left: 0; flex: 1 1 auto; min-width: 160px; }
+      .tooltabs { display: flex; gap: 6px; background: var(--card2); border: 1px solid var(--border); border-radius: 11px; padding: 4px; margin-bottom: 12px; }
+      .ttab { flex: 1; border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 650; font-size: 13px; padding: 8px 4px; border-radius: 8px; cursor: pointer; }
+      .ttab.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+      .tpl-inputs { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+      .tpl-pal { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+      .tpl-list { display: flex; flex-direction: column; gap: 8px; }
+      .tpl-row { display: flex; align-items: center; gap: 12px; text-align: left; border: 1px solid var(--border); background: var(--card); border-radius: 11px; padding: 8px 10px; cursor: pointer; color: var(--text); font: inherit; }
+      .tpl-row:hover { border-color: color-mix(in srgb, var(--acc) 45%, var(--border)); }
+      .tpl-mini { flex: 0 0 auto; width: 72px; height: 34px; display: block; }
+      .tpl-txt { display: flex; flex-direction: column; gap: 2px; } .tpl-txt b { font-size: 13.5px; } .tpl-txt span { font-size: 11.5px; color: var(--muted); }
       .spectrum { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
       .chan { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
       .cn { font-family: ui-monospace, monospace; font-weight: 700; } .cv { text-align: right; font-family: ui-monospace, monospace; }
