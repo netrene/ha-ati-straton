@@ -26,10 +26,15 @@ ENDPOINT_VERSION = "/api/version"
 ENDPOINT_UPTIME = "/api/uptime"
 ENDPOINT_DEMO = "/api/demo"
 ENDPOINT_PAR_TABLE = "/api/par-table"
+ENDPOINT_DATA = "/api/data"
 
 
 class ATIStratonApiError(Exception):
     """Base ATI Straton API error."""
+
+
+class ATIStratonWriteDisabled(ATIStratonApiError):
+    """Raised when a write is attempted while write access is disabled."""
 
 
 class ATIStratonCannotConnect(ATIStratonApiError):
@@ -47,7 +52,13 @@ class ATIStratonResponseError(ATIStratonApiError):
 class ATIStratonApiClient:
     """Small local HTTP client for the ATI Straton Flex web API."""
 
-    def __init__(self, session: ClientSession, config: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        session: ClientSession,
+        config: Mapping[str, Any],
+        *,
+        write_enabled: bool = False,
+    ) -> None:
         """Initialize the API client."""
         host = str(config[CONF_HOST]).strip()
         if not host.startswith(("http://", "https://")):
@@ -57,6 +68,12 @@ class ATIStratonApiClient:
         self._password = str(config[CONF_PASSWORD])
         self._session = session
         self._session_cookie: str | None = None
+        self._write_enabled = bool(write_enabled)
+
+    @property
+    def write_enabled(self) -> bool:
+        """Return whether write access is enabled for this client."""
+        return self._write_enabled
 
     async def login(self) -> None:
         """Authenticate and store the local session cookie."""
@@ -151,6 +168,29 @@ class ATIStratonApiClient:
         """Return PAR display factor table."""
         return await self._get_list(ENDPOINT_PAR_TABLE)
 
+    async def put_data(
+        self,
+        timelines: list[dict[str, Any]],
+        spots: list[dict[str, Any]],
+        colors: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist the full program permanently (the SAVE action).
+
+        Verified from the web app: ``PUT /api/data`` with body
+        ``{timelines, spots, colors}`` → response ``{lines, spots, colors}``.
+        This is a read-modify-write of the whole program; ``spots`` are passed
+        back opaque (full objects). Each call is a flash write — callers must
+        debounce. Guarded: raises :class:`ATIStratonWriteDisabled` unless write
+        access is explicitly enabled (real reef hardware safeguard).
+        """
+        if not self._write_enabled:
+            raise ATIStratonWriteDisabled("ATI Straton write access is disabled")
+        payload = {"timelines": timelines, "spots": spots, "colors": colors}
+        result = await self._request("PUT", ENDPOINT_DATA, json=payload)
+        if not isinstance(result, dict):
+            raise ATIStratonResponseError("PUT /api/data did not return an object")
+        return result
+
     async def _get_dict(self, endpoint: str) -> dict[str, Any]:
         payload = await self._get(endpoint)
         if not isinstance(payload, dict):
@@ -184,6 +224,52 @@ class ATIStratonApiClient:
                 if retry_auth:
                     await self.login()
                     return await self._get(endpoint, retry_auth=False)
+                raise ATIStratonAuthError("ATI Straton session is not authorized")
+            try:
+                response.raise_for_status()
+                return await response.json(content_type=None)
+            except ClientResponseError as err:
+                raise ATIStratonResponseError(
+                    f"{endpoint} returned HTTP {response.status}"
+                ) from err
+            except ValueError as err:
+                text = await response.text()
+                raise ATIStratonResponseError(
+                    f"{endpoint} returned invalid JSON: {text[:80]}"
+                ) from err
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        json: Any = None,
+        retry_auth: bool = True,
+    ) -> Any:
+        headers = {}
+        if self._session_cookie:
+            headers["Cookie"] = f"connect.sid={self._session_cookie}"
+
+        try:
+            response = await self._session.request(
+                method,
+                self._url(endpoint),
+                headers=headers,
+                json=json,
+                timeout=15,
+            )
+        except TimeoutError as err:
+            raise ATIStratonCannotConnect("Timed out connecting to ATI Straton") from err
+        except ClientError as err:
+            raise ATIStratonCannotConnect("Cannot connect to ATI Straton") from err
+
+        async with response:
+            if response.status in (401, 403):
+                if retry_auth:
+                    await self.login()
+                    return await self._request(
+                        method, endpoint, json=json, retry_auth=False
+                    )
                 raise ATIStratonAuthError("ATI Straton session is not authorized")
             try:
                 response.raise_for_status()

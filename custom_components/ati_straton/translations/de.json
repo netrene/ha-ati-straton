@@ -31,6 +31,19 @@
       "reauth_successful": "Die erneute Authentifizierung war erfolgreich"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ATI Straton Flex Optionen",
+        "description": "Schreibzugriff ist standardmaessig aus. Erst aktivieren, wenn das Setup geprueft ist - Schreibvorgaenge gehen an reale Riff-Hardware und jedes Speichern ist ein Flash-Write.",
+        "data": {
+          "write_enabled": "Schreibzugriff aktivieren (Steuerung)",
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "auto_save": "Aenderungen dauerhaft in der Leuchte speichern"
+        }
+      }
+    }
+  },
   "entity": {
     "binary_sensor": {
       "connection": {

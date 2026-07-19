@@ -19,11 +19,12 @@ Abgeleitet aus `HANDOVER-2026-07-19-app-session.md` (Punkte A–F) + Abgleich mi
 
 ## Phasen (priorisiert)
 
-- **Phase 1 — Read-only-Korrekturen (sicher, kein Hardware-Risiko):** ⟵ *aktuell in Arbeit*
+- **Phase 1 — Read-only-Korrekturen (sicher, kein Hardware-Risiko):** ✅ **released v0.3.0**
   1. PAR-pro-Tiefe-Sensoren (`par_table`-Faktoren × Watt).
   2. Watt → `adc/5.5`.
   3. Spot-Temp-Sensoren nach **Sektion** benennen (Links/Mitte/rechts aus `externalId`-Index), `temperature=null` sauber.
-- **Phase 2 — Fundament (kein realer Write):** Options-Flow (`write_enabled` Default AUS, `scan_interval`, `auto_save`) + `put_data`-Skelett (RMW, Debounce, `spots` opak) hinter Guard.
+- **Geräte-Namensschema** (v0.4.0): `<deviceType>-<serial>-<Master|Slave>`, aus einer gemeinsamen Quelle (`lamp_device_info`), damit der Master nicht zwei Namen bekommt.
+- **Phase 2 — Fundament (kein realer Write):** ✅ **v0.4.0** — Options-Flow (`write_enabled` Default AUS, `scan_interval`, `auto_save`) + gated `api.put_data()` (`PUT /api/data`, `spots` opak) + Coordinator-RMW-Helfer `async_apply_timelines()`. Debounce kommt mit der ersten Control-Entity (Phase 3).
 - **Phase 3 — Erste Steuerung (⚠️ reale Hardware, nur live mit Rene):** `light.straton_<gruppe>` ON/OFF (`timeline.active`) + Dimmen (Node-`value`) via `PUT /api/data`; zuerst rechts/0 %.
 - **Phase 4 — Koexistenz & Live:** Single-Session-Pausier-Schalter; `python-socketio`-Client (`temperature-spots`/`changed-intensity`) statt/zusätzlich 30 s-Poll; Spot-Identität dann auf `externalId` re-keyen; ermöglicht transientes Live-Dimmen (`update-node`) für Override/Mondlicht.
 - **Phase 5 — Komfort & UX:** mDNS-Discovery (A); Panel-Cockpit-Redesign (F); `number`/`select`/`button` (Kanäle, Profile via `/api/presettings`, Speichern).

@@ -141,6 +141,19 @@ class ATIStratonCoordinator(DataUpdateCoordinator[ATIStratonData]):
             _LOGGER.debug("Optional ATI Straton endpoint failed: %s", err)
             return None
 
+    async def async_apply_timelines(self, timelines: list[dict[str, Any]]) -> None:
+        """Persist a modified timelines list (read-modify-write).
+
+        Callers read ``self.data.timelines``, patch a copy, and pass it here;
+        ``spots`` and ``colors`` are sent back opaque. Writing is guarded inside
+        the client (raises when write access is disabled). Not called by any
+        entity yet (Phase 3) — a debounce will be added with the first control
+        entity, since every write is a flash write.
+        """
+        data = self.data
+        await self.client.put_data(timelines, data.spots, data.colors)
+        await self.async_request_refresh()
+
 
 def first_present(data: dict[str, Any] | None, *keys: str) -> Any:
     """Return the first non-empty value from a mapping."""

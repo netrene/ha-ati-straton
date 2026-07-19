@@ -31,6 +31,19 @@
       "reauth_successful": "Re-authentication was successful"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ATI Straton Flex options",
+        "description": "Write access is off by default. Only enable it once the setup is verified - writes go to real reef hardware and each save is a flash write.",
+        "data": {
+          "write_enabled": "Enable write access (control)",
+          "scan_interval": "Polling interval (seconds)",
+          "auto_save": "Save changes permanently to the lamp"
+        }
+      }
+    }
+  },
   "entity": {
     "binary_sensor": {
       "connection": {

@@ -10,10 +10,53 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import (
     ATIStratonCoordinator,
+    ATIStratonData,
     external_device_id,
     first_present,
     spot_section,
 )
+
+
+def lamp_device_info(data: ATIStratonData, lamp_id: Any) -> DeviceInfo:
+    """Build the device registry entry for one physical lamp.
+
+    Single source of truth so the master lamp gets the same name from both the
+    whole-device entities and its spot entities. Naming scheme:
+    ``<deviceType>-<serial>-<Master|Slave>`` (e.g. ``Straton Flex 153-114619-Master``).
+    """
+    lamp_id = str(lamp_id)
+    is_master = lamp_id == str(data.device_id)
+
+    if is_master:
+        model = data.device_type or "Straton Flex"
+        sw_version = data.sw_version
+    else:
+        device = next(
+            (
+                item
+                for item in data.devices
+                if str(first_present(item, "externalId")) == lamp_id
+            ),
+            None,
+        )
+        model = first_present(device, "deviceType") or data.device_type or "Straton Flex"
+        sw_version = data.sw_version
+        version = first_present(device, "swVersion")
+        if isinstance(version, dict):
+            sw_version = first_present(version, "number") or sw_version
+
+    role = "Master" if is_master else "Slave"
+    info: DeviceInfo = {
+        "identifiers": {(DOMAIN, lamp_id)},
+        "manufacturer": MANUFACTURER,
+        "model": str(model),
+        "name": f"{model}-{lamp_id}-{role}",
+    }
+    if not is_master:
+        info["via_device"] = (DOMAIN, str(data.device_id))
+    if sw_version:
+        info["sw_version"] = str(sw_version)
+    return info
 
 
 class ATIStratonEntity(CoordinatorEntity[ATIStratonCoordinator]):
@@ -29,19 +72,16 @@ class ATIStratonEntity(CoordinatorEntity[ATIStratonCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return Home Assistant device registry info."""
+        """Return Home Assistant device registry info for the master lamp."""
         data = self.coordinator.data
-        device_id = data.device_id if data else self.coordinator.entry.entry_id
-        name = data.device_type if data else "ATI Straton Flex"
-        info: DeviceInfo = {
-            "identifiers": {(DOMAIN, str(device_id))},
+        if data and data.device_id:
+            return lamp_device_info(data, data.device_id)
+        return {
+            "identifiers": {(DOMAIN, str(self.coordinator.entry.entry_id))},
             "manufacturer": MANUFACTURER,
-            "model": data.device_type if data else "Straton Flex",
-            "name": str(name or "ATI Straton Flex"),
+            "model": "Straton Flex",
+            "name": "ATI Straton Flex",
         }
-        if data and data.sw_version:
-            info["sw_version"] = data.sw_version
-        return info
 
 
 class ATIStratonSpotEntity(ATIStratonEntity):
@@ -87,34 +127,7 @@ class ATIStratonSpotEntity(ATIStratonEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info for the physical lamp that owns the spot."""
-        spot = self.spot
         data = self.coordinator.data
-        external_id = first_present(spot, "externalId")
+        external_id = first_present(self.spot, "externalId")
         lamp_id = external_device_id(external_id) or data.device_id
-        custom_name = first_present(spot, "customName")
-        device = next(
-            (
-                item
-                for item in data.devices
-                if str(first_present(item, "externalId")) == str(lamp_id)
-            ),
-            None,
-        )
-        model = first_present(device, "deviceType") or data.device_type or "Straton Flex"
-        name = custom_name or first_present(device, "name") or f"ATI-Straton-{lamp_id}"
-        sw_version = data.sw_version
-        version = first_present(device, "swVersion")
-        if isinstance(version, dict):
-            sw_version = first_present(version, "number") or sw_version
-
-        info: DeviceInfo = {
-            "identifiers": {(DOMAIN, str(lamp_id))},
-            "manufacturer": MANUFACTURER,
-            "model": str(model),
-            "name": str(name),
-        }
-        if lamp_id != data.device_id:
-            info["via_device"] = (DOMAIN, str(data.device_id))
-        if sw_version:
-            info["sw_version"] = str(sw_version)
-        return info
+        return lamp_device_info(data, lamp_id)
