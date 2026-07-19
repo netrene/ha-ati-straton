@@ -23,7 +23,7 @@ PANEL_COMPONENT_NAME = "ati-straton-program-panel"
 PANEL_ICON = "mdi:chart-bell-curve"
 PANEL_TITLE = "ATI Straton"
 # Bump on every panel.js change to bust the browser cache and re-register.
-PANEL_VERSION = "0.6.0"
+PANEL_VERSION = "0.7.0"
 PANEL_FILE = "frontend/panel.js"
 PANEL_MODULE_URL = f"/ati_straton/panel-{PANEL_VERSION}.js"
 
@@ -210,6 +210,15 @@ def _color_payload(color: dict[str, Any]) -> dict[str, Any]:
         "visible": color.get("visible"),
         "disabled": color.get("disabled"),
         "bgColor": color.get("bgColor"),
+        "values": [
+            {
+                "name": value.get("name"),
+                "value": value.get("value"),
+                "sort": value.get("sort"),
+            }
+            for value in color.get("values", [])
+            if isinstance(value, dict)
+        ],
     }
 
 

@@ -113,6 +113,25 @@ class ATIStratonProgramPanel extends HTMLElement {
       const program = this._program();
       if (program && program.timelines.length) this._timelineId = String(program.timelines[0].id);
       this._render();
+      return;
+    }
+    const pal = event.target.closest('select[name="palette"]');
+    if (pal) {
+      const node = this._selNode();
+      const colors = (this._program() && this._program().colors) || [];
+      const chosen = colors.find((c) => String(c.id) === pal.value);
+      if (node && chosen) {
+        // Points reference a palette by id; the lamp is written the palette id
+        // (node.color._id) plus the palette library — not per-point raw values.
+        node.color = {
+          id: chosen.id,
+          name: chosen.name,
+          bgColor: chosen.bgColor,
+          values: (chosen.values || []).slice(),
+        };
+        this._dirty = true;
+        this._render();
+      }
     }
   }
 
@@ -348,8 +367,12 @@ class ATIStratonProgramPanel extends HTMLElement {
         <button class="sbtn" data-action="adj" data-field="${field}" data-d="-1" ${field === "time" && isEnd ? "disabled" : ""}>−</button>
         <span class="sval">${value}${unit ? " " + unit : ""}</span>
         <button class="sbtn" data-action="adj" data-field="${field}" data-d="1" ${field === "time" && isEnd ? "disabled" : ""}>+</button></div>`;
-    const pal = (sel.color && sel.color.name) || "–";
     const palColor = (sel.color && sel.color.bgColor) || "var(--acc)";
+    const curId = sel.color && sel.color.id;
+    const colors = (this._program() && this._program().colors) || [];
+    const options = colors.length
+      ? colors.map((c) => `<option value="${this._esc(String(c.id))}" ${String(c.id) === String(curId) ? "selected" : ""}>${this._esc(c.name)}${c.disabled === false ? " · eigen" : ""}</option>`).join("")
+      : `<option selected>${this._esc((sel.color && sel.color.name) || "–")}</option>`;
     return `
       <div class="pt-edit">
         <div class="pt-steppers">
@@ -360,7 +383,11 @@ class ATIStratonProgramPanel extends HTMLElement {
           <button class="btn" data-action="addpoint">+ Punkt</button>
           <button class="btn danger" data-action="delpoint" ${isEnd ? "disabled" : ""} title="Punkt löschen">🗑</button>
         </div>
-        <div class="pt-pal"><span class="dot" style="background:${this._esc(palColor)}"></span>Palette: ${this._esc(pal)}</div>
+        <div class="pt-pal">
+          <span class="pt-pal-l">Palette</span>
+          <span class="dot" style="background:${this._esc(palColor)}"></span>
+          <select name="palette" aria-label="Palette" ${colors.length ? "" : "disabled"}>${options}</select>
+        </div>
       </div>`;
   }
 
@@ -529,6 +556,8 @@ class ATIStratonProgramPanel extends HTMLElement {
       .sval { min-width: 66px; text-align: center; font-family: ui-monospace, monospace; font-size: 15px; font-weight: 650; background: var(--card2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 6px; }
       .pt-actions { display: flex; gap: 8px; }
       .pt-pal { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+      .pt-pal-l { min-width: 46px; }
+      .pt-pal select { margin-left: 0; flex: 1 1 auto; min-width: 160px; }
       .spectrum { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
       .chan { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
       .cn { font-family: ui-monospace, monospace; font-weight: 700; } .cv { text-align: right; font-family: ui-monospace, monospace; }
